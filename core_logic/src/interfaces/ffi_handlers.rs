@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::path::PathBuf;
+use tokio::sync::Mutex;
 use crate::domain::traits::{AgentOrchestrator, MemoryStore, ToolExecutor};
 use crate::infrastructure::llm_client::DeepSeekClient;
 use crate::infrastructure::memory_store::LocalMemoryStore;
@@ -24,6 +24,13 @@ pub struct DeadlinerCore {
 }
 
 impl DeadlinerCore {
+    fn workspace_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+    }
+
     pub fn new(
         api_key: String,
         base_url: String,
@@ -38,8 +45,9 @@ impl DeadlinerCore {
 
         let memory_store = Arc::new(LocalMemoryStore::new(storage_dir));
         let llm_gateway = Arc::new(DeepSeekClient::new(api_key, base_url, model_id));
+        let skills_dir = Self::workspace_root().join("skills");
         let skill_registry = Arc::new(
-            SkillRegistry::load_from_dir("./skills").unwrap_or_else(|_| SkillRegistry::empty())
+            SkillRegistry::load_from_dir(skills_dir).unwrap_or_else(|_| SkillRegistry::empty())
         );
         let orchestrator = Arc::new(Orchestrator::new(
             llm_gateway, 

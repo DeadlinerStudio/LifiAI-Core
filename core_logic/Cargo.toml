@@ -1,0 +1,24 @@
+[package]
+name = "core_logic"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "core_logic"
+crate-type = ["rlib"]
+
+[dependencies]
+# 核心异步与网络
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# 序列化与数据结构
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.7", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+
+thiserror = "1.0"

@@ -1,0 +1,3 @@
+// Placeholder for future UniFFI bindings.
+// Keep UDL definitions in this wrapper crate instead of `core_logic`
+// so FFI tooling stays isolated from business logic.

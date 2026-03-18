@@ -1,0 +1,11 @@
+[package]
+name = "ffi_ohos"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "ffi_ohos"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+core_logic = { path = "../core_logic" }

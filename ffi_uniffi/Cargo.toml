@@ -1,0 +1,11 @@
+[package]
+name = "ffi_uniffi"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "ffi_uniffi"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+core_logic = { path = "../core_logic" }

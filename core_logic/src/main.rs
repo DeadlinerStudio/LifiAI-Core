@@ -1,26 +1,21 @@
-pub mod domain;
-pub mod application;
-pub mod infrastructure;
-pub mod interfaces;
-
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use dotenvy::dotenv;
+use dotenvy::from_path_override;
 use serde_json::json;
 use tokio::sync::Mutex;
 
-use crate::application::orchestrator::Orchestrator;
-use crate::domain::models::{
+use core_logic::application::orchestrator::Orchestrator;
+use core_logic::domain::models::{
     AIError, AgentRole, ChatChoice, ChatMessage, ChatRequest, ChatResponse, MemoryFragment,
     MixedResult, ToolMetadata,
 };
-use crate::domain::traits::{AgentOrchestrator, LlmGateway, MemoryStore, ToolExecutor};
-use crate::infrastructure::llm_client::DeepSeekClient;
-use crate::infrastructure::memory_store::LocalMemoryStore;
-use crate::infrastructure::skill_registry::SkillRegistry;
+use core_logic::domain::traits::{AgentOrchestrator, LlmGateway, MemoryStore, ToolExecutor};
+use core_logic::infrastructure::llm_client::DeepSeekClient;
+use core_logic::infrastructure::memory_store::LocalMemoryStore;
+use core_logic::infrastructure::skill_registry::SkillRegistry;
 
 struct MockLlmGateway {
     model: String,
@@ -82,6 +77,13 @@ impl MemoryStore for MockMemoryStore {
     async fn get_long_term_context(&self) -> Result<String, AIError> {
         Ok(String::new())
     }
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
 }
 
 fn build_demo_registry() -> Arc<SkillRegistry> {
@@ -236,8 +238,9 @@ async fn run_real_mode(platform: String) -> Result<(), Box<dyn std::error::Error
 
     println!("🚀 Deadliner AI Core 正在连接 DeepSeek API (多 Agent 模式)...");
 
-    let storage_dir = PathBuf::from("./temp_storage");
-    let skills_dir = PathBuf::from("./skills");
+    let root = workspace_root();
+    let storage_dir = root.join("temp_storage");
+    let skills_dir = root.join("skills");
     if !storage_dir.exists() {
         std::fs::create_dir_all(&storage_dir)?;
     }
@@ -267,7 +270,8 @@ async fn run_real_mode(platform: String) -> Result<(), Box<dyn std::error::Error
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenv().ok();
+    let root = workspace_root();
+    let _ = from_path_override(root.join(".env"));
 
     let platform = std::env::var("DEADLINER_PLATFORM")
         .unwrap_or_else(|_| "ios".to_string());

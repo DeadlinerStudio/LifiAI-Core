@@ -9,3 +9,5 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 core_logic = { path = "../core_logic" }
+uniffi = { version = "0.28", features = ["tokio"] }
+thiserror = "1.0"

@@ -1,2 +1,4 @@
 /target
 .env
+temp_storage
+dist

@@ -4,14 +4,21 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Serialize, Deserialize};
-use crate::domain::models::{MemoryFragment, AIError, MAX_MEMORY_FRAGMENTS, MAX_MEMORY_AGE_DAYS};
+use crate::domain::models::{
+    AIError, MemoryFragment, MemorySnapshot, MemorySyncOperation, MemorySyncPayload,
+    MAX_MEMORY_AGE_DAYS, MAX_MEMORY_FRAGMENTS,
+};
 use crate::domain::traits::MemoryStore;
 use chrono::{Utc, Duration};
 
 #[derive(Serialize, Deserialize, Default)]
 struct StorageData {
+    revision: u64,
+    last_synced_revision: u64,
     fragments: Vec<MemoryFragment>,
     user_profile: String,
+    #[serde(skip)]
+    pending_sync: Vec<MemorySyncOperation>,
 }
 
 pub struct LocalMemoryStore {
@@ -45,9 +52,16 @@ impl LocalMemoryStore {
         let mut data = self.data.write().await;
         let now = Utc::now();
         let cutoff = now - Duration::days(MAX_MEMORY_AGE_DAYS);
+        let mut removed_ids = Vec::new();
 
         // 1) 时间过期淘汰
-        data.fragments.retain(|f| f.timestamp >= cutoff);
+        data.fragments.retain(|f| {
+            let keep = f.timestamp >= cutoff;
+            if !keep {
+                removed_ids.push(f.id);
+            }
+            keep
+        });
 
         // 2) 超容量淘汰
         if data.fragments.len() > MAX_MEMORY_FRAGMENTS {
@@ -58,7 +72,25 @@ impl LocalMemoryStore {
                     b.timestamp.cmp(&a.timestamp)
                 }
             });
-            data.fragments.truncate(MAX_MEMORY_FRAGMENTS);
+            let truncated = data.fragments.split_off(MAX_MEMORY_FRAGMENTS);
+            removed_ids.extend(truncated.into_iter().map(|fragment| fragment.id));
+        }
+
+        if !removed_ids.is_empty() {
+            data.revision += 1;
+            data.pending_sync.extend(
+                removed_ids
+                    .into_iter()
+                    .map(|fragment_id| MemorySyncOperation::DeleteFragment { fragment_id }),
+            );
+        }
+    }
+
+    fn build_snapshot(data: &StorageData) -> MemorySnapshot {
+        MemorySnapshot {
+            revision: data.revision,
+            fragments: data.fragments.clone(),
+            user_profile: data.user_profile.clone(),
         }
     }
 }
@@ -74,6 +106,9 @@ impl MemoryStore for LocalMemoryStore {
 
         let fragment = MemoryFragment::new(content, category);
         data.fragments.push(fragment);
+        let fragment = data.fragments.last().cloned().ok_or(AIError::ParsingFailed)?;
+        data.revision += 1;
+        data.pending_sync.push(MemorySyncOperation::UpsertFragment { fragment });
         
         drop(data); // 释放写锁以便执行 prune
         self.prune_memories().await;
@@ -89,6 +124,11 @@ impl MemoryStore for LocalMemoryStore {
     async fn save_user_profile(&self, profile: String) -> Result<(), AIError> {
         let mut data = self.data.write().await;
         data.user_profile = profile.trim().to_string();
+        let profile = data.user_profile.clone();
+        data.revision += 1;
+        data.pending_sync.push(MemorySyncOperation::ReplaceUserProfile {
+            profile,
+        });
         drop(data);
         self.save_to_disk().await?;
         Ok(())
@@ -127,5 +167,34 @@ impl MemoryStore for LocalMemoryStore {
         } else {
             Ok(joined)
         }
+    }
+
+    async fn replace_snapshot(&self, snapshot: MemorySnapshot) -> Result<(), AIError> {
+        let mut data = self.data.write().await;
+        data.revision = snapshot.revision;
+        data.last_synced_revision = snapshot.revision;
+        data.fragments = snapshot.fragments;
+        data.user_profile = snapshot.user_profile;
+        data.pending_sync.clear();
+        drop(data);
+        self.save_to_disk().await?;
+        Ok(())
+    }
+
+    async fn current_snapshot(&self) -> Result<MemorySnapshot, AIError> {
+        let data = self.data.read().await;
+        Ok(Self::build_snapshot(&data))
+    }
+
+    async fn drain_pending_sync(&self) -> Result<MemorySyncPayload, AIError> {
+        let mut data = self.data.write().await;
+        let payload = MemorySyncPayload {
+            base_revision: data.last_synced_revision,
+            next_revision: data.revision,
+            operations: data.pending_sync.clone(),
+        };
+        data.last_synced_revision = data.revision;
+        data.pending_sync.clear();
+        Ok(payload)
     }
 }

@@ -7,12 +7,20 @@ use crate::infrastructure::memory_store::LocalMemoryStore;
 use crate::infrastructure::skill_registry::SkillRegistry;
 use crate::application::orchestrator::Orchestrator;
 pub use crate::interfaces::events::{CoreEvent, FFITask, FFIHabit};
-use crate::domain::models::MixedResult;
+use crate::domain::models::{MemorySnapshot, MixedResult};
 
 // MARK: - Callback Trait
 
 pub trait CoreCallback: Send + Sync {
     fn on_event(&self, event: CoreEvent);
+}
+
+#[derive(Debug, Clone, Default)]
+struct LatestState {
+    tasks: Vec<FFITask>,
+    habits: Vec<FFIHabit>,
+    memory_sync_json: Option<String>,
+    finish_json: Option<String>,
 }
 
 // MARK: - Core Implementation
@@ -21,6 +29,7 @@ pub struct DeadlinerCore {
     orchestrator: Arc<Orchestrator>,
     memory_store: Arc<LocalMemoryStore>,
     callback: Arc<Mutex<Option<Box<dyn CoreCallback>>>>,
+    latest_state: Arc<Mutex<LatestState>>,
 }
 
 impl DeadlinerCore {
@@ -61,6 +70,7 @@ impl DeadlinerCore {
             orchestrator,
             memory_store,
             callback: Arc::new(Mutex::new(None)),
+            latest_state: Arc::new(Mutex::new(LatestState::default())),
         })
     }
 
@@ -86,12 +96,49 @@ impl DeadlinerCore {
     }
 
     pub fn get_latest_tasks(&self) -> Vec<FFITask> {
-        vec![]
+        self.latest_state.blocking_lock().tasks.clone()
+    }
+
+    pub fn get_latest_habits(&self) -> Vec<FFIHabit> {
+        self.latest_state.blocking_lock().habits.clone()
+    }
+
+    pub fn get_last_memory_sync_json(&self) -> Option<String> {
+        self.latest_state.blocking_lock().memory_sync_json.clone()
+    }
+
+    pub fn get_last_finish_json(&self) -> Option<String> {
+        self.latest_state.blocking_lock().finish_json.clone()
     }
 
     pub fn get_user_profile(&self) -> String {
         tokio::runtime::Handle::current().block_on(async {
             self.memory_store.get_user_profile().await.unwrap_or_default()
+        })
+    }
+
+    pub async fn replace_memory_snapshot(&self, snapshot_json: String) {
+        let result = match serde_json::from_str::<MemorySnapshot>(&snapshot_json) {
+            Ok(snapshot) => self.memory_store.replace_snapshot(snapshot).await.map_err(|_| CoreError::ParsingFailed),
+            Err(_) => Err(CoreError::ParsingFailed),
+        };
+
+        if let Err(err) = result {
+            self.send_event(CoreEvent::OnError {
+                message: err.to_string(),
+            })
+            .await;
+        }
+    }
+
+    pub fn export_memory_snapshot(&self) -> String {
+        tokio::runtime::Handle::current().block_on(async {
+            self.memory_store
+                .current_snapshot()
+                .await
+                .ok()
+                .and_then(|snapshot| serde_json::to_string(&snapshot).ok())
+                .unwrap_or_else(|| "{\"revision\":0,\"fragments\":[],\"userProfile\":\"\"}".to_string())
         })
     }
 
@@ -127,13 +174,45 @@ impl DeadlinerCore {
             total_target: h.total_target,
         }).collect());
 
-        self.send_event(CoreEvent::OnFinish { 
+        let memory_sync_json = self.memory_store
+            .drain_pending_sync()
+            .await
+            .ok()
+            .and_then(|payload| {
+                if payload.operations.is_empty() {
+                    None
+                } else {
+                    serde_json::to_string(&payload).ok()
+                }
+            });
+
+        let finish_json = serde_json::json!({
+            "primaryIntent": result.primary_intent.clone().unwrap_or_default(),
+            "tasks": tasks.clone(),
+            "habits": habits.clone(),
+            "chatResponse": result.chat_response.clone(),
+            "sessionSummary": result.session_summary.clone(),
+            "memorySyncJson": memory_sync_json.clone(),
+        })
+        .to_string();
+
+        {
+            let mut latest = self.latest_state.lock().await;
+            latest.tasks = tasks.clone().unwrap_or_default();
+            latest.habits = habits.clone().unwrap_or_default();
+            latest.memory_sync_json = memory_sync_json.clone();
+            latest.finish_json = Some(finish_json);
+        }
+
+        self.send_event(CoreEvent::OnFinish {
             primary_intent: result.primary_intent.unwrap_or_default(),
             tasks,
             habits,
             chat_response: result.chat_response,
             session_summary: result.session_summary,
-        }).await;
+            memory_sync_json,
+        })
+        .await;
     }
 
     async fn send_event(&self, event: CoreEvent) {

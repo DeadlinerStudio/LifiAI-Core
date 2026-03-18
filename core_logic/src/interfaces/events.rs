@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone)]
 pub enum CoreEvent {
     OnThinking { agent_name: String },
@@ -9,18 +11,19 @@ pub enum CoreEvent {
         habits: Option<Vec<FFIHabit>>,
         chat_response: Option<String>,
         session_summary: Option<String>,
+        memory_sync_json: Option<String>,
     },
     OnError { message: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FFITask {
     pub name: String,
     pub due_time: Option<String>,
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FFIHabit {
     pub name: String,
     pub period: String,

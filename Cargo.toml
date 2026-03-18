@@ -3,6 +3,7 @@ members = [
     "core_logic",
     "ffi_uniffi",
     "ffi_ohos",
+    "uniffi-bindgen",
 ]
 default-members = ["core_logic"]
 resolver = "3"

@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use core_logic::application::orchestrator::Orchestrator;
 use core_logic::domain::models::{
     AIError, AgentRole, ChatChoice, ChatMessage, ChatRequest, ChatResponse, MemoryFragment,
-    MixedResult, ToolMetadata,
+    MemorySnapshot, MemorySyncPayload, MixedResult, ToolMetadata,
 };
 use core_logic::domain::traits::{AgentOrchestrator, LlmGateway, MemoryStore, ToolExecutor};
 use core_logic::infrastructure::llm_client::DeepSeekClient;
@@ -76,6 +76,18 @@ impl MemoryStore for MockMemoryStore {
 
     async fn get_long_term_context(&self) -> Result<String, AIError> {
         Ok(String::new())
+    }
+
+    async fn replace_snapshot(&self, _snapshot: MemorySnapshot) -> Result<(), AIError> {
+        Ok(())
+    }
+
+    async fn current_snapshot(&self) -> Result<MemorySnapshot, AIError> {
+        Ok(MemorySnapshot::default())
+    }
+
+    async fn drain_pending_sync(&self) -> Result<MemorySyncPayload, AIError> {
+        Ok(MemorySyncPayload::default())
     }
 }
 

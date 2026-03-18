@@ -179,6 +179,32 @@ impl Orchestrator {
         }
     }
 
+    async fn memory_context_message(&self) -> Option<ChatMessage> {
+        match self.memory_store.get_long_term_context().await {
+            Ok(context) if !context.trim().is_empty() => Some(ChatMessage {
+                role: "system".to_string(),
+                content: format!("以下是用户的长期记忆上下文，请在推理时参考：\n{}", context),
+            }),
+            _ => None,
+        }
+    }
+
+    async fn persist_memory_updates(&self, result: &MixedResult) -> Result<(), AIError> {
+        if let Some(profile) = &result.user_profile {
+            self.memory_store.save_user_profile(profile.clone()).await?;
+        }
+
+        if let Some(memories) = &result.new_memories {
+            for memory in memories {
+                self.memory_store
+                    .save_memory(memory.clone(), "assistant_inferred".to_string())
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn register_pending_tool_call(
         &self,
         tool_call_id: String,
@@ -213,10 +239,13 @@ impl Orchestrator {
             original_text, result_json
         );
 
-        let messages = vec![
+        let mut messages = vec![
             ChatMessage { role: "system".to_string(), content: system_prompt },
-            ChatMessage { role: "user".to_string(), content: observation_prompt },
         ];
+        if let Some(memory_message) = self.memory_context_message().await {
+            messages.push(memory_message);
+        }
+        messages.push(ChatMessage { role: "user".to_string(), content: observation_prompt });
 
         let request = ChatRequest {
             model: self.llm_gateway.get_model_name(),
@@ -236,16 +265,20 @@ impl Orchestrator {
         if let Some(tool_calls) = &worker_result.tool_calls {
             self.validate_tool_calls(&role, tool_calls)?;
         }
+        self.persist_memory_updates(&worker_result).await?;
         Ok(worker_result)
     }
 
     /// 第一阶段：Supervisor 路由
     async fn route(&self, text: &str) -> Result<MixedResult, AIError> {
         let system_prompt = PromptBuilder::build_supervisor_prompt(&self.preferred_lang);
-        let messages = vec![
+        let mut messages = vec![
             ChatMessage { role: "system".to_string(), content: system_prompt },
-            ChatMessage { role: "user".to_string(), content: text.to_string() },
         ];
+        if let Some(memory_message) = self.memory_context_message().await {
+            messages.push(memory_message);
+        }
+        messages.push(ChatMessage { role: "user".to_string(), content: text.to_string() });
 
         let request = ChatRequest {
             model: self.llm_gateway.get_model_name(),
@@ -274,10 +307,13 @@ impl Orchestrator {
             _ => "你是 Deadliner AI 助手。".to_string(),
         };
 
-        let messages = vec![
+        let mut messages = vec![
             ChatMessage { role: "system".to_string(), content: system_prompt },
-            ChatMessage { role: "user".to_string(), content: text.to_string() },
         ];
+        if let Some(memory_message) = self.memory_context_message().await {
+            messages.push(memory_message);
+        }
+        messages.push(ChatMessage { role: "user".to_string(), content: text.to_string() });
 
         let request = ChatRequest {
             model: self.llm_gateway.get_model_name(),
@@ -352,6 +388,7 @@ impl AgentOrchestrator for Orchestrator {
             }
         }
 
+        self.persist_memory_updates(&final_result).await?;
         Ok(final_result)
     }
 }
@@ -376,7 +413,9 @@ mod tests {
 
     use serde_json::json;
 
-    use crate::domain::models::{ChatChoice, ChatResponse, MemoryFragment, ToolMetadata};
+    use crate::domain::models::{
+        ChatChoice, ChatResponse, MemoryFragment, MemorySnapshot, MemorySyncPayload, ToolMetadata,
+    };
 
     struct MockLlmGateway {
         model: String,
@@ -437,6 +476,18 @@ mod tests {
 
         async fn get_long_term_context(&self) -> Result<String, AIError> {
             Ok(String::new())
+        }
+
+        async fn replace_snapshot(&self, _snapshot: MemorySnapshot) -> Result<(), AIError> {
+            Ok(())
+        }
+
+        async fn current_snapshot(&self) -> Result<MemorySnapshot, AIError> {
+            Ok(MemorySnapshot::default())
+        }
+
+        async fn drain_pending_sync(&self) -> Result<MemorySyncPayload, AIError> {
+            Ok(MemorySyncPayload::default())
         }
     }
 

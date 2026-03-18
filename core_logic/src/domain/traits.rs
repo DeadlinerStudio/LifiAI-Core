@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use crate::domain::models::{ChatRequest, ChatResponse, AIError, MixedResult, MemoryFragment};
+use crate::domain::models::{
+    AIError, ChatRequest, ChatResponse, MemoryFragment, MemorySnapshot, MemorySyncPayload,
+    MixedResult,
+};
 
 /// 大模型网关接口
 /// 抽象了具体的 LLM 实现（如 DeepSeek, OpenAI）
@@ -36,4 +39,10 @@ pub trait MemoryStore: Send + Sync {
     async fn get_user_profile(&self) -> Result<String, AIError>;
     /// 获取用于 LLM 提示词的长效上下文 (对应 Swift 的 getLongTermContext)
     async fn get_long_term_context(&self) -> Result<String, AIError>;
+    /// 用原生端的权威快照覆盖 Rust 内存镜像
+    async fn replace_snapshot(&self, snapshot: MemorySnapshot) -> Result<(), AIError>;
+    /// 读取当前内存快照（给原生端做全量校准）
+    async fn current_snapshot(&self) -> Result<MemorySnapshot, AIError>;
+    /// 读取并清空待同步增量（给原生端落库）
+    async fn drain_pending_sync(&self) -> Result<MemorySyncPayload, AIError>;
 }

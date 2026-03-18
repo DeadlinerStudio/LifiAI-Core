@@ -66,6 +66,30 @@ impl MemoryFragment {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySnapshot {
+    pub revision: u64,
+    pub fragments: Vec<MemoryFragment>,
+    pub user_profile: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum MemorySyncOperation {
+    UpsertFragment { fragment: MemoryFragment },
+    DeleteFragment { fragment_id: Uuid },
+    ReplaceUserProfile { profile: String },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySyncPayload {
+    pub base_revision: u64,
+    pub next_revision: u64,
+    pub operations: Vec<MemorySyncOperation>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AITask {

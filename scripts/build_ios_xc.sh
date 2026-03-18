@@ -5,10 +5,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT_DIR}/dist/ios"
 HEADERS_DIR="${OUT_DIR}/headers"
+BINDINGS_DIR="${OUT_DIR}/bindings"
 PACKAGE_NAME="${PACKAGE_NAME:-ffi_uniffi}"
 LIB_NAME="${LIB_NAME:-ffi_uniffi}"
 
-mkdir -p "${OUT_DIR}" "${HEADERS_DIR}"
+mkdir -p "${OUT_DIR}" "${HEADERS_DIR}" "${BINDINGS_DIR}"
 
 cd "${ROOT_DIR}"
 
@@ -24,6 +25,13 @@ SIM_ARM64_LIB="${ROOT_DIR}/target/aarch64-apple-ios-sim/release/lib${LIB_NAME}.a
 SIM_X64_LIB="${ROOT_DIR}/target/x86_64-apple-ios/release/lib${LIB_NAME}.a"
 SIM_UNIVERSAL_LIB="${OUT_DIR}/lib${LIB_NAME}_simulator.a"
 XCFRAMEWORK_DIR="${OUT_DIR}/${LIB_NAME}.xcframework"
+
+echo "==> Generating Swift bindings from ${SIM_ARM64_LIB}"
+cargo run -p uniffi-bindgen -- \
+  generate \
+  --library "${SIM_ARM64_LIB}" \
+  --language swift \
+  --out-dir "${BINDINGS_DIR}"
 
 echo "==> Creating universal simulator archive"
 lipo -create \
@@ -45,4 +53,4 @@ else
   echo "simulator lib: ${SIM_UNIVERSAL_LIB}"
 fi
 
-echo "==> Next step: add UniFFI-generated Swift sources to the Apple wrapper once bindings are re-enabled."
+echo "==> Swift bindings written to ${BINDINGS_DIR}"

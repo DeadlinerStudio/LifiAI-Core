@@ -25,7 +25,7 @@ dictionary FFIHabit {
     i32? total_target;
 };
 
-interface CoreCallback {
+callback interface CoreCallback {
     void on_event(CoreEvent event);
 };
 
@@ -33,7 +33,7 @@ enum CoreEvent {
     OnThinking(string agent_name),
     OnTextStream(string chunk),
     OnToolRequest(string id, string tool_name, string args_json),
-    OnFinish(string primary_intent, sequence<FFITask>? tasks, sequence<FFIHabit>? habits, string? chat_response, string? session_summary),
+    OnFinish(string primary_intent, string? chat_response),
     OnError(string message)
 };
 

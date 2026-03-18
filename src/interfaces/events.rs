@@ -1,7 +1,4 @@
-use uniffi::Enum;
-use crate::domain::models::{AITask, AIHabit, AIToolCall, MemoryFragment};
-
-#[derive(Enum)]
+#[derive(Debug, Clone)]
 pub enum CoreEvent {
     OnThinking { agent_name: String },
     OnTextStream { chunk: String },
@@ -16,16 +13,14 @@ pub enum CoreEvent {
     OnError { message: String },
 }
 
-// UniFFI 不支持直接导出包含复杂的第三方库（如 serde_json::Value）的结构体
-// 所以我们需要在接口层定义平铺的（Flat）DTO
-#[derive(uniffi::Record)]
+#[derive(Debug, Clone)]
 pub struct FFITask {
     pub name: String,
     pub due_time: Option<String>,
     pub note: Option<String>,
 }
 
-#[derive(uniffi::Record)]
+#[derive(Debug, Clone)]
 pub struct FFIHabit {
     pub name: String,
     pub period: String,

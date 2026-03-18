@@ -1,3 +1,3 @@
 fn main() {
-    uniffi::generate_scaffolding("src/deadliner.udl").expect("FFI: UDL generation failed");
+    // UniFFI scaffolding is temporarily disabled so the core can build as a pure Rust crate.
 }

@@ -10,6 +10,27 @@ pub const DEFAULT_TIME_FORMAT: &str = "%Y-%m-%d %H:%M";
 pub const MAX_MEMORY_FRAGMENTS: usize = 60;
 pub const MAX_MEMORY_AGE_DAYS: i64 = 120;
 
+// MARK: - Multi-Agent & Tool Metadata (Section 4 & 5)
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum AgentRole {
+    Supervisor,
+    TaskAgent,
+    HabitAgent,
+    ChatAgent,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolMetadata {
+    pub name: String,
+    pub description: String,
+    pub domain: AgentRole,
+    pub supported_platforms: Vec<String>,
+    pub requires_ui_confirmation: bool,
+    pub parameters: serde_json::Value,
+}
+
 // MARK: - AI 提取结果模型
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -53,10 +74,11 @@ pub struct AIHabit {
     pub total_target: Option<i32>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MixedResult {
     pub primary_intent: Option<String>,
+    pub routed_agents: Option<Vec<AgentRole>>,
     pub tasks: Option<Vec<AITask>>,
     pub habits: Option<Vec<AIHabit>>,
     pub new_memories: Option<Vec<String>>,
@@ -66,8 +88,7 @@ pub struct MixedResult {
     pub tool_calls: Option<Vec<AIToolCall>>,
 }
 
-// MARK: - API 请求/响应模型 (DeepSeek/OpenAI 兼容格式)
-// 在严格的 DDD 中，外部 API 模型通常放在 infrastructure，但为了配合你的组织方式，暂时放在这里。
+// MARK: - API 请求/响应模型
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
@@ -102,7 +123,6 @@ pub enum AIError {
     NetworkError(String),
 }
 
-// 为 AIError 实现标准的 Display，这相当于 Swift 里的 LocalizedError
 impl fmt::Display for AIError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -114,10 +134,9 @@ impl fmt::Display for AIError {
     }
 }
 
-// 实现 Rust 标准库的 Error trait
 impl std::error::Error for AIError {}
 
-// MARK: - Tool Calls (MCP-like, local tools)
+// MARK: - Tool Calls
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -129,44 +148,12 @@ pub struct AIToolCall {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct ReadTasksArgs {
-    pub time_range_days: Option<i32>,
-    pub status: Option<String>,
-    pub keywords: Option<Vec<String>>,
-    pub limit: Option<i32>,
-    pub sort: Option<String>,
-}
-
-// MARK: - Tool Request / Result (App-side)
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct AIToolRequest {
-    pub id: Uuid,
-    pub tool: String,
-    pub args: serde_json::Value,
-    pub reason: Option<String>,
-}
-
-impl AIToolRequest {
-    pub fn new(tool: String, args: serde_json::Value, reason: Option<String>) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            tool,
-            args,
-            reason,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct AIToolResult {
     pub id: Uuid,
     pub tool: String,
     pub applied_args: serde_json::Value,
     pub payload: serde_json::Value,
-    pub generated_at: DateTime<Utc>, // 使用 UTC 时间，serde 会自动将其处理为 ISO8601 格式
+    pub generated_at: DateTime<Utc>,
 }
 
 impl AIToolResult {
@@ -177,53 +164,6 @@ impl AIToolResult {
             applied_args,
             payload,
             generated_at: Utc::now(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ReadTasksResultPayload {
-    pub tasks: Vec<TaskDigestItem>,
-    pub summary: TaskSummary,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct TaskDigestItem {
-    pub id: i64,
-    pub name: String,
-    pub due: String,
-    pub status: String,
-    pub note_preview: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct TaskSummary {
-    pub count: i32,
-    pub overdue: i32,
-    pub due_soon_24h: i32,
-}
-
-// MARK: - Monthly Analysis
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct MonthlyAnalysisResult {
-    pub month: String,
-    pub summary: String,
-    pub keywords: Vec<String>,
-    pub generated_at: Option<DateTime<Utc>>,
-}
-
-impl MonthlyAnalysisResult {
-    pub fn new(month: String, summary: String, keywords: Vec<String>) -> Self {
-        Self {
-            month,
-            summary,
-            keywords,
-            generated_at: Some(Utc::now()),
         }
     }
 }

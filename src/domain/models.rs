@@ -20,6 +20,17 @@ pub enum AgentRole {
     ChatAgent,
 }
 
+impl AgentRole {
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            AgentRole::Supervisor => "Supervisor",
+            AgentRole::TaskAgent => "TaskAgent",
+            AgentRole::HabitAgent => "HabitAgent",
+            AgentRole::ChatAgent => "ChatAgent",
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolMetadata {
@@ -121,6 +132,8 @@ pub enum AIError {
     EmptyResponse,
     ParsingFailed,
     NetworkError(String),
+    ConfigError(String),
+    InvalidToolCall(String),
 }
 
 impl fmt::Display for AIError {
@@ -130,6 +143,8 @@ impl fmt::Display for AIError {
             AIError::EmptyResponse => write!(f, "AI 返回内容为空"),
             AIError::ParsingFailed => write!(f, "AI 数据解析失败"),
             AIError::NetworkError(err) => write!(f, "网络请求失败: {}", err),
+            AIError::ConfigError(err) => write!(f, "配置错误: {}", err),
+            AIError::InvalidToolCall(err) => write!(f, "工具调用无效: {}", err),
         }
     }
 }
@@ -141,6 +156,7 @@ impl std::error::Error for AIError {}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AIToolCall {
+    pub agent: Option<AgentRole>,
     pub tool: String,
     pub args: serde_json::Value,
     pub reason: Option<String>,

@@ -1,0 +1,19 @@
+{
+  "name": "update_deadline",
+  "description": "修改已有任务的截止时间，适用于用户明确表达延期、改期或重新安排。",
+  "domain": "TaskAgent",
+  "supportedPlatforms": ["ios", "android", "harmony"],
+  "requiresUiConfirmation": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "taskId": {
+        "type": "string"
+      },
+      "newDueTime": {
+        "type": "string"
+      }
+    },
+    "required": ["taskId", "newDueTime"]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "read_habits",
+  "description": "读取用户现有习惯列表，用于避免重复创建或辅助判断频率配置。",
+  "domain": "HabitAgent",
+  "supportedPlatforms": ["ios", "android", "harmony"],
+  "requiresUiConfirmation": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "keywords": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

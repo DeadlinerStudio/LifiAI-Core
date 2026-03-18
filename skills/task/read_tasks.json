@@ -1,0 +1,22 @@
+{
+  "name": "read_tasks",
+  "description": "读取用户本地的任务列表，用于去重、冲突检测或补充上下文。",
+  "domain": "TaskAgent",
+  "supportedPlatforms": ["ios", "android", "harmony"],
+  "requiresUiConfirmation": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "timeRangeDays": {
+        "type": "integer",
+        "default": 7
+      },
+      "keywords": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

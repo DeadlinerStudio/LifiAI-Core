@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::path::PathBuf;
 use tokio::sync::Mutex;
+use tokio::runtime::Runtime;
 use crate::domain::traits::{AgentOrchestrator, MemoryStore, ToolExecutor};
 use crate::infrastructure::llm_client::DeepSeekClient;
 use crate::infrastructure::memory_store::LocalMemoryStore;
@@ -28,6 +29,7 @@ struct LatestState {
 pub struct DeadlinerCore {
     orchestrator: Arc<Orchestrator>,
     memory_store: Arc<LocalMemoryStore>,
+    runtime: Arc<Runtime>,
     callback: Arc<Mutex<Option<Box<dyn CoreCallback>>>>,
     latest_state: Arc<Mutex<LatestState>>,
 }
@@ -47,6 +49,13 @@ impl DeadlinerCore {
         storage_path: String,
         platform: String,
     ) -> Arc<Self> {
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build Tokio runtime for DeadlinerCore"),
+        );
+
         let storage_dir = PathBuf::from(storage_path);
         if !storage_dir.exists() {
             let _ = std::fs::create_dir_all(&storage_dir);
@@ -69,6 +78,7 @@ impl DeadlinerCore {
         Arc::new(Self {
             orchestrator,
             memory_store,
+            runtime,
             callback: Arc::new(Mutex::new(None)),
             latest_state: Arc::new(Mutex::new(LatestState::default())),
         })
@@ -80,19 +90,31 @@ impl DeadlinerCore {
     }
 
     pub async fn process_input(&self, text: String) {
-        self.send_event(CoreEvent::OnThinking { agent_name: "Supervisor".to_string() }).await;
+        let orchestrator = self.orchestrator.clone();
+        let runtime = self.runtime.clone();
+        let this = self.clone_for_spawn();
 
-        match self.orchestrator.process_message(text.clone()).await {
-            Ok(result) => self.handle_mixed_result(text, result).await,
-            Err(e) => self.send_event(CoreEvent::OnError { message: e.to_string() }).await,
-        }
+        runtime.spawn(async move {
+            this.send_event(CoreEvent::OnThinking { agent_name: "Supervisor".to_string() }).await;
+
+            match orchestrator.process_message(text.clone()).await {
+                Ok(result) => this.handle_mixed_result(text, result).await,
+                Err(e) => this.send_event(CoreEvent::OnError { message: e.to_string() }).await,
+            }
+        });
     }
 
     pub async fn submit_tool_result(&self, id: String, result_json: String) {
-        match self.orchestrator.submit_tool_result(id, result_json).await {
-            Ok(result) => self.handle_mixed_result(String::new(), result).await,
-            Err(e) => self.send_event(CoreEvent::OnError { message: e.to_string() }).await,
-        }
+        let orchestrator = self.orchestrator.clone();
+        let runtime = self.runtime.clone();
+        let this = self.clone_for_spawn();
+
+        runtime.spawn(async move {
+            match orchestrator.submit_tool_result(id, result_json).await {
+                Ok(result) => this.handle_mixed_result(String::new(), result).await,
+                Err(e) => this.send_event(CoreEvent::OnError { message: e.to_string() }).await,
+            }
+        });
     }
 
     pub fn get_latest_tasks(&self) -> Vec<FFITask> {
@@ -112,27 +134,33 @@ impl DeadlinerCore {
     }
 
     pub fn get_user_profile(&self) -> String {
-        tokio::runtime::Handle::current().block_on(async {
+        self.runtime.block_on(async {
             self.memory_store.get_user_profile().await.unwrap_or_default()
         })
     }
 
     pub async fn replace_memory_snapshot(&self, snapshot_json: String) {
-        let result = match serde_json::from_str::<MemorySnapshot>(&snapshot_json) {
-            Ok(snapshot) => self.memory_store.replace_snapshot(snapshot).await.map_err(|_| CoreError::ParsingFailed),
-            Err(_) => Err(CoreError::ParsingFailed),
-        };
+        let memory_store = self.memory_store.clone();
+        let runtime = self.runtime.clone();
+        let this = self.clone_for_spawn();
 
-        if let Err(err) = result {
-            self.send_event(CoreEvent::OnError {
-                message: err.to_string(),
-            })
-            .await;
-        }
+        runtime.spawn(async move {
+            let result = match serde_json::from_str::<MemorySnapshot>(&snapshot_json) {
+                Ok(snapshot) => memory_store.replace_snapshot(snapshot).await.map_err(|_| CoreError::ParsingFailed),
+                Err(_) => Err(CoreError::ParsingFailed),
+            };
+
+            if let Err(err) = result {
+                this.send_event(CoreEvent::OnError {
+                    message: err.to_string(),
+                })
+                .await;
+            }
+        });
     }
 
     pub fn export_memory_snapshot(&self) -> String {
-        tokio::runtime::Handle::current().block_on(async {
+        self.runtime.block_on(async {
             self.memory_store
                 .current_snapshot()
                 .await
@@ -219,6 +247,16 @@ impl DeadlinerCore {
         let cb = self.callback.lock().await;
         if let Some(callback) = cb.as_ref() {
             callback.on_event(event);
+        }
+    }
+
+    fn clone_for_spawn(&self) -> Self {
+        Self {
+            orchestrator: self.orchestrator.clone(),
+            memory_store: self.memory_store.clone(),
+            runtime: self.runtime.clone(),
+            callback: self.callback.clone(),
+            latest_state: self.latest_state.clone(),
         }
     }
 }

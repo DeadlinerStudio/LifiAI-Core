@@ -62,6 +62,37 @@ impl Orchestrator {
         }
     }
 
+    fn fallback_chat_result(text: &str, content: &str) -> MixedResult {
+        let trimmed_text = text.trim();
+        let trimmed_content = content.trim();
+
+        let mut result = MixedResult {
+            primary_intent: Some("Chat".to_string()),
+            chat_response: Some(trimmed_content.to_string()),
+            ..Default::default()
+        };
+
+        if Self::looks_like_memory_statement(trimmed_text) {
+            result.new_memories = Some(vec![trimmed_text.to_string()]);
+        }
+
+        if Self::looks_like_profile_statement(trimmed_text) {
+            result.user_profile = Some(trimmed_text.to_string());
+        }
+
+        result
+    }
+
+    fn looks_like_memory_statement(text: &str) -> bool {
+        let patterns = ["记住", "记一下", "以后", "我是", "我喜欢", "我习惯", "我通常", "请叫我"];
+        patterns.iter().any(|pattern| text.contains(pattern))
+    }
+
+    fn looks_like_profile_statement(text: &str) -> bool {
+        let patterns = ["我是", "我喜欢", "我习惯", "我通常", "偏好", "请叫我", "默认"];
+        patterns.iter().any(|pattern| text.contains(pattern))
+    }
+
     fn validate_tool_calls(&self, role: &AgentRole, tool_calls: &[AIToolCall]) -> Result<(), AIError> {
         for tool_call in tool_calls {
             let tool = self
@@ -179,6 +210,59 @@ impl Orchestrator {
         }
     }
 
+    fn observation_task_fallback(result_json: &str) -> Option<Vec<crate::domain::models::AITask>> {
+        let value: Value = serde_json::from_str(result_json).ok()?;
+        let tasks = value.get("tasks")?.as_array()?;
+        if tasks.is_empty() {
+            return Some(Vec::new());
+        }
+
+        let mapped: Vec<crate::domain::models::AITask> = tasks
+            .iter()
+            .filter_map(|task| {
+                let name = task.get("name")?.as_str()?.trim().to_string();
+                if name.is_empty() {
+                    return None;
+                }
+                let due_time = task
+                    .get("due")
+                    .and_then(Value::as_str)
+                    .map(|raw| raw.replace('T', " "));
+                let note = task
+                    .get("notePreview")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+
+                Some(crate::domain::models::AITask {
+                    name,
+                    due_time,
+                    note,
+                })
+            })
+            .collect();
+
+        Some(mapped)
+    }
+
+    fn apply_observation_fallback(
+        role: &AgentRole,
+        result_json: &str,
+        worker_result: &mut MixedResult,
+    ) {
+        if matches!(role, AgentRole::TaskAgent) {
+            let needs_fallback = worker_result.tasks.as_ref().map(|tasks| tasks.is_empty()).unwrap_or(true);
+            if needs_fallback {
+                if let Some(tasks) = Self::observation_task_fallback(result_json) {
+                    if !tasks.is_empty() {
+                        worker_result.tasks = Some(tasks);
+                    }
+                }
+            }
+        }
+    }
+
     async fn memory_context_message(&self) -> Option<ChatMessage> {
         match self.memory_store.get_long_term_context().await {
             Ok(context) if !context.trim().is_empty() => Some(ChatMessage {
@@ -203,6 +287,45 @@ impl Orchestrator {
         }
 
         Ok(())
+    }
+
+    async fn synthesize_memory(
+        &self,
+        original_text: &str,
+        final_result: &MixedResult,
+    ) -> Result<MixedResult, AIError> {
+        let system_prompt = PromptBuilder::build_memory_synthesizer_prompt(&self.preferred_lang);
+        let final_result_json = serde_json::to_string_pretty(final_result).map_err(|_| AIError::ParsingFailed)?;
+
+        let synthesis_prompt = format!(
+            "原始用户输入：{}\n\n本轮已经确认的最终结构化结果：{}\n\n请只输出记忆相关 JSON。",
+            original_text, final_result_json
+        );
+
+        let mut messages = vec![
+            ChatMessage { role: "system".to_string(), content: system_prompt },
+        ];
+        if let Some(memory_message) = self.memory_context_message().await {
+            messages.push(memory_message);
+        }
+        messages.push(ChatMessage { role: "user".to_string(), content: synthesis_prompt });
+
+        let request = ChatRequest {
+            model: self.llm_gateway.get_model_name(),
+            messages,
+            temperature: 0.1,
+        };
+
+        let response = self.llm_gateway.chat(request).await?;
+        let content = response.choices.first()
+            .map(|c| c.message.content.clone())
+            .ok_or(AIError::EmptyResponse)?;
+
+        println!("DEBUG: Memory Synthesis Response: {}", content);
+
+        let json_str = Self::extract_json(&content)?;
+        let memory_result: MixedResult = serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
+        Ok(memory_result)
     }
 
     pub async fn register_pending_tool_call(
@@ -231,11 +354,25 @@ impl Orchestrator {
         let system_prompt = match role {
             AgentRole::TaskAgent => PromptBuilder::build_task_agent_prompt(&self.preferred_lang, &tools),
             AgentRole::HabitAgent => PromptBuilder::build_habit_agent_prompt(&self.preferred_lang, &tools),
+            AgentRole::ChatAgent => PromptBuilder::build_chat_agent_prompt(&self.preferred_lang),
             _ => "你是 Deadliner AI 助手。".to_string(),
         };
 
         let observation_prompt = format!(
-            "原始用户输入：{}\n\n工具执行结果 JSON：{}\n\n请结合上述 observation 输出最终 JSON。若信息已经足够，不要再次输出 toolCalls。",
+            r#"你现在处于工具调用后的第二阶段整理。
+
+原始用户输入：
+{}
+
+工具执行结果 JSON：
+{}
+
+请严格遵守以下规则：
+1. 你必须基于上面的工具结果进行最终整理，不能忽略 observation。
+2. 如果工具结果里已经出现可直接使用的 tasks/habits，就应该优先吸收并输出，而不是返回空数组。
+3. 只有当工具结果明确表明没有相关数据，且用户输入也不足以生成结果时，才能输出空数组。
+4. 这一轮默认应该给最终答案；若信息已经足够，禁止再次输出 toolCalls。
+5. 只输出纯 JSON。"#,
             original_text, result_json
         );
 
@@ -261,7 +398,8 @@ impl Orchestrator {
         println!("DEBUG: Observation Response: {}", content);
 
         let json_str = Self::extract_json(&content)?;
-        let worker_result: MixedResult = serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
+        let mut worker_result: MixedResult = serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
+        Self::apply_observation_fallback(&role, &result_json, &mut worker_result);
         if let Some(tool_calls) = &worker_result.tool_calls {
             self.validate_tool_calls(&role, tool_calls)?;
         }
@@ -328,8 +466,11 @@ impl Orchestrator {
 
         println!("DEBUG: Agent Response: {}", content);
 
-        let json_str = Self::extract_json(&content)?;
-        let mut worker_result: MixedResult = serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
+        let mut worker_result: MixedResult = match Self::extract_json(&content) {
+            Ok(json_str) => serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?,
+            Err(_) if role == AgentRole::ChatAgent => Self::fallback_chat_result(text, &content),
+            Err(err) => return Err(err),
+        };
         if let Some(tool_calls) = &mut worker_result.tool_calls {
             self.validate_tool_calls(&role, tool_calls)?;
             for tool_call in tool_calls.iter_mut() {
@@ -386,7 +527,36 @@ impl AgentOrchestrator for Orchestrator {
                 current_tool_calls.extend(tool_calls);
                 final_result.tool_calls = Some(current_tool_calls);
             }
+            if let Some(new_memories) = worker_res.new_memories {
+                let mut current_memories = final_result.new_memories.unwrap_or_default();
+                current_memories.extend(new_memories);
+                final_result.new_memories = Some(current_memories);
+            }
+            if let Some(chat_response) = worker_res.chat_response {
+                match &mut final_result.chat_response {
+                    Some(existing) if !existing.is_empty() => {
+                        if !chat_response.is_empty() {
+                            existing.push_str("\n");
+                            existing.push_str(&chat_response);
+                        }
+                    }
+                    _ => {
+                        final_result.chat_response = Some(chat_response);
+                    }
+                }
+            }
+            if let Some(session_summary) = worker_res.session_summary {
+                final_result.session_summary = Some(session_summary);
+            }
+            if let Some(user_profile) = worker_res.user_profile {
+                final_result.user_profile = Some(user_profile);
+            }
         }
+
+        let memory_result = self.synthesize_memory(&text, &final_result).await?;
+        final_result.new_memories = memory_result.new_memories;
+        final_result.user_profile = memory_result.user_profile;
+        final_result.session_summary = memory_result.session_summary.or(final_result.session_summary);
 
         self.persist_memory_updates(&final_result).await?;
         Ok(final_result)
@@ -533,6 +703,15 @@ mod tests {
             })
             .to_string(),
             json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "准备执行任务去重工具",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
                 "tasks": [
                     {
                         "name": "写 Rust 冒烟测试",
@@ -540,6 +719,15 @@ mod tests {
                         "note": "避免重复后确认创建"
                     }
                 ]
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "完成了一次任务去重检查",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
             })
             .to_string(),
         ]));
@@ -607,6 +795,15 @@ mod tests {
                 ]
             })
             .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": null,
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
         ]));
 
         let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
@@ -629,5 +826,164 @@ mod tests {
             }
             other => panic!("unexpected error: {}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn observation_fallback_uses_tool_tasks_when_model_returns_empty() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "toolCalls": [
+                    {
+                        "tool": "read_tasks",
+                        "args": {
+                            "timeRangeDays": 7
+                        },
+                        "reason": "检查已有任务"
+                    }
+                ]
+            })
+            .to_string(),
+            json!({
+                "tasks": [],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "读取了已有任务并整理结果",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let user_input = "看看有没有重复任务".to_string();
+        let initial_result = orchestrator.process_message(user_input.clone()).await.unwrap();
+        let tool_call = initial_result
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .cloned()
+            .expect("expected tool call");
+
+        orchestrator
+            .register_pending_tool_call(
+                "fallback-tool-call".to_string(),
+                tool_call.agent.unwrap_or(AgentRole::TaskAgent),
+                user_input,
+            )
+            .await;
+
+        let final_result = orchestrator
+            .submit_tool_result(
+                "fallback-tool-call".to_string(),
+                json!({
+                    "summary": {
+                        "count": 2,
+                        "dueSoon24h": 0,
+                        "overdue": 0
+                    },
+                    "tasks": [
+                        {
+                            "notePreview": "用户提及的会议",
+                            "name": "开会",
+                            "id": 2,
+                            "due": "2026-03-20T15:00:00",
+                            "status": "OPEN"
+                        },
+                        {
+                            "notePreview": "",
+                            "name": "11111",
+                            "id": 1,
+                            "due": "2026-03-28T00:22:00",
+                            "status": "OPEN"
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        let tasks = final_result.tasks.expect("expected fallback tasks");
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].name, "开会");
+        assert_eq!(tasks[0].due_time.as_deref(), Some("2026-03-20 15:00:00"));
+        assert_eq!(tasks[1].name, "11111");
+    }
+
+    #[tokio::test]
+    async fn final_memory_synthesizer_adds_memories_to_merged_result() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "tasks": [
+                    {
+                        "name": "写 Rust 冒烟测试",
+                        "dueTime": "2026-03-19 10:00",
+                        "note": "明天上午十点"
+                    }
+                ],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "newMemories": ["用户最近在推进 Rust 测试相关开发"],
+                "userProfile": "用户当前在进行 Rust 工程开发",
+                "sessionSummary": "记录了一条 Rust 冒烟测试任务",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let result = orchestrator
+            .process_message("帮我记一下明天上午十点写 Rust 冒烟测试".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(result.tasks.as_ref().map(|tasks| tasks.len()), Some(1));
+        assert_eq!(
+            result.new_memories,
+            Some(vec!["用户最近在推进 Rust 测试相关开发".to_string()])
+        );
+        assert_eq!(
+            result.user_profile.as_deref(),
+            Some("用户当前在进行 Rust 工程开发")
+        );
+        assert_eq!(
+            result.session_summary.as_deref(),
+            Some("记录了一条 Rust 冒烟测试任务")
+        );
     }
 }

@@ -89,4 +89,67 @@ impl PromptBuilder {
             tools_section
         )
     }
+
+    /// 4. Chat Expert Prompt - 闲聊与记忆专家
+    pub fn build_chat_agent_prompt(preferred_lang: &str) -> String {
+        format!(
+            r#"你是 Deadliner 聊天专家。负责处理闲聊、确认、偏好记录与轻量陪伴式回复。
+            用户语言：{}
+
+            【强制约束】:
+            - 必须输出纯 JSON，禁止输出任何 JSON 之外的自然语言。
+            - 如果只是正常聊天，请把回复放进 chatResponse。
+            - 如果用户在表达长期偏好、身份信息、作息偏好、输出偏好、工作习惯等，可写入：
+              1. newMemories: 字符串数组
+              2. userProfile: 一段可覆盖更新的用户画像摘要
+            - 不要输出 tasks，除非用户明确提出单次任务。
+            - 不要输出 habits，除非用户明确提出周期性习惯。
+            - 不要输出 toolCalls，除非确实需要本地数据才能回答。
+
+            必须输出 JSON：
+            {{
+              "chatResponse": "...",
+              "newMemories": ["..."],
+              "userProfile": "...",
+              "tasks": [],
+              "habits": [],
+              "toolCalls": []
+            }}
+            "#,
+            preferred_lang
+        )
+    }
+
+    /// 5. Final Memory Synthesis Prompt - 最终记忆整理器
+    pub fn build_memory_synthesizer_prompt(preferred_lang: &str) -> String {
+        format!(
+            r#"你是 Deadliner 的最终记忆整理器。你的职责不是重新提取任务或习惯，而是根据本轮已经确认的最终结果，决定是否沉淀长期记忆。
+            用户语言：{}
+
+            【强制约束】:
+            - 必须输出纯 JSON，禁止输出 JSON 之外的自然语言。
+            - 只负责产出：
+              1. newMemories: 适合长期保留的短句数组
+              2. userProfile: 可覆盖更新的用户画像摘要
+              3. sessionSummary: 对本轮的简短总结
+            - 不要新增、修改、删除 tasks。
+            - 不要新增、修改、删除 habits。
+            - 不要输出 toolCalls。
+            - 如果本轮没有值得长期记住的信息，newMemories 返回 []，userProfile 可为 null。
+            - 只有长期偏好、身份信息、稳定习惯、常用时间偏好、输出偏好、持续目标等内容才应进入记忆。
+            - 单次事务性内容通常不应该进入长期记忆，除非它反映了用户稳定偏好。
+
+            必须输出 JSON：
+            {{
+              "newMemories": ["..."],
+              "userProfile": "...",
+              "sessionSummary": "...",
+              "tasks": [],
+              "habits": [],
+              "toolCalls": []
+            }}
+            "#,
+            preferred_lang
+        )
+    }
 }

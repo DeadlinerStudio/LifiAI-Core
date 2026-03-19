@@ -8,6 +8,8 @@ HEADERS_DIR="${OUT_DIR}/headers"
 BINDINGS_DIR="${OUT_DIR}/bindings"
 PACKAGE_NAME="${PACKAGE_NAME:-ffi_uniffi}"
 LIB_NAME="${LIB_NAME:-ffi_uniffi}"
+FFI_HEADER_NAME="${LIB_NAME}FFI.h"
+FFI_MODULEMAP_NAME="${LIB_NAME}FFI.modulemap"
 
 mkdir -p "${OUT_DIR}" "${HEADERS_DIR}" "${BINDINGS_DIR}"
 
@@ -32,6 +34,10 @@ cargo run -p uniffi-bindgen -- \
   --library "${SIM_ARM64_LIB}" \
   --language swift \
   --out-dir "${BINDINGS_DIR}"
+
+echo "==> Preparing XCFramework headers"
+cp "${BINDINGS_DIR}/${FFI_HEADER_NAME}" "${HEADERS_DIR}/${FFI_HEADER_NAME}"
+cp "${BINDINGS_DIR}/${FFI_MODULEMAP_NAME}" "${HEADERS_DIR}/module.modulemap"
 
 echo "==> Creating universal simulator archive"
 lipo -create \

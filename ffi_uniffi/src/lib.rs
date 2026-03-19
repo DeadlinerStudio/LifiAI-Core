@@ -23,7 +23,11 @@ pub struct FFIHabit {
 
 #[derive(Debug, Clone, uniffi::Enum)]
 pub enum CoreEvent {
-    OnThinking { agent_name: String },
+    OnThinking {
+        agent_name: String,
+        phase: String,
+        message: Option<String>,
+    },
     OnTextStream { chunk: String },
     OnToolRequest { id: String, tool_name: String, args_json: String },
     OnFinish {
@@ -33,6 +37,11 @@ pub enum CoreEvent {
         chat_response: Option<String>,
         session_summary: Option<String>,
         memory_sync_json: Option<String>,
+    },
+    OnMemoryCommitted {
+        added_memories: Vec<String>,
+        profile_updated: bool,
+        new_revision: u64,
     },
     OnError { message: String },
 }
@@ -172,7 +181,15 @@ impl From<inner_events::FFIHabit> for FFIHabit {
 impl From<inner_events::CoreEvent> for CoreEvent {
     fn from(value: inner_events::CoreEvent) -> Self {
         match value {
-            inner_events::CoreEvent::OnThinking { agent_name } => Self::OnThinking { agent_name },
+            inner_events::CoreEvent::OnThinking {
+                agent_name,
+                phase,
+                message,
+            } => Self::OnThinking {
+                agent_name,
+                phase,
+                message,
+            },
             inner_events::CoreEvent::OnTextStream { chunk } => Self::OnTextStream { chunk },
             inner_events::CoreEvent::OnToolRequest {
                 id,
@@ -197,6 +214,15 @@ impl From<inner_events::CoreEvent> for CoreEvent {
                 chat_response,
                 session_summary,
                 memory_sync_json,
+            },
+            inner_events::CoreEvent::OnMemoryCommitted {
+                added_memories,
+                profile_updated,
+                new_revision,
+            } => Self::OnMemoryCommitted {
+                added_memories,
+                profile_updated,
+                new_revision,
             },
             inner_events::CoreEvent::OnError { message } => Self::OnError { message },
         }

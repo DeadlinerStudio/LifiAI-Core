@@ -9,6 +9,19 @@ use crate::domain::traits::{LlmGateway, AgentOrchestrator, ToolExecutor, MemoryS
 use crate::application::prompt_builder::PromptBuilder;
 use crate::infrastructure::skill_registry::SkillRegistry;
 
+#[async_trait]
+pub trait OrchestratorProgressSink: Send + Sync {
+    async fn on_thinking(&self, agent_name: String, phase: String, message: Option<String>);
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MemoryCommitResult {
+    pub added_memories: Vec<String>,
+    pub profile_updated: bool,
+    pub new_revision: u64,
+    pub memory_sync_json: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 struct PendingToolContext {
     role: AgentRole,
@@ -21,6 +34,7 @@ pub struct Orchestrator {
     skill_registry: Arc<SkillRegistry>,
     platform: String,
     pending_tool_calls: Arc<Mutex<HashMap<String, PendingToolContext>>>,
+    progress_sink: Arc<Mutex<Option<Arc<dyn OrchestratorProgressSink>>>>,
     pub preferred_lang: String,
 }
 
@@ -38,7 +52,24 @@ impl Orchestrator {
             skill_registry,
             platform,
             pending_tool_calls: Arc::new(Mutex::new(HashMap::new())),
+            progress_sink: Arc::new(Mutex::new(None)),
             preferred_lang,
+        }
+    }
+
+    pub async fn set_progress_sink(&self, sink: Arc<dyn OrchestratorProgressSink>) {
+        let mut current = self.progress_sink.lock().await;
+        *current = Some(sink);
+    }
+
+    async fn emit_thinking(&self, agent_name: &str, phase: &str, message: Option<String>) {
+        let sink = {
+            let current = self.progress_sink.lock().await;
+            current.clone()
+        };
+
+        if let Some(sink) = sink {
+            sink.on_thinking(agent_name.to_string(), phase.to_string(), message).await;
         }
     }
 
@@ -294,6 +325,9 @@ impl Orchestrator {
         original_text: &str,
         final_result: &MixedResult,
     ) -> Result<MixedResult, AIError> {
+        self.emit_thinking("Supervisor", "memory", Some("正在整理并写入记忆".to_string()))
+            .await;
+
         let system_prompt = PromptBuilder::build_memory_synthesizer_prompt(&self.preferred_lang);
         let final_result_json = serde_json::to_string_pretty(final_result).map_err(|_| AIError::ParsingFailed)?;
 
@@ -328,6 +362,25 @@ impl Orchestrator {
         Ok(memory_result)
     }
 
+    fn apply_memory_result(final_result: &mut MixedResult, memory_result: MixedResult) {
+        final_result.new_memories = memory_result.new_memories;
+        final_result.user_profile = memory_result.user_profile;
+        final_result.session_summary = memory_result
+            .session_summary
+            .or(final_result.session_summary.clone());
+    }
+
+    async fn finalize_result_with_memory(
+        &self,
+        original_text: &str,
+        mut final_result: MixedResult,
+    ) -> Result<MixedResult, AIError> {
+        let memory_result = self.synthesize_memory(original_text, &final_result).await?;
+        Self::apply_memory_result(&mut final_result, memory_result);
+        self.persist_memory_updates(&final_result).await?;
+        Ok(final_result)
+    }
+
     pub async fn register_pending_tool_call(
         &self,
         tool_call_id: String,
@@ -350,6 +403,13 @@ impl Orchestrator {
         original_text: String,
         result_json: String,
     ) -> Result<MixedResult, AIError> {
+        self.emit_thinking(
+            role.as_label(),
+            "working",
+            Some("收到工具结果，正在继续整理答案".to_string()),
+        )
+        .await;
+
         let tools = self.skill_registry.for_role_and_platform(&role, &self.platform);
         let system_prompt = match role {
             AgentRole::TaskAgent => PromptBuilder::build_task_agent_prompt(&self.preferred_lang, &tools),
@@ -403,12 +463,18 @@ impl Orchestrator {
         if let Some(tool_calls) = &worker_result.tool_calls {
             self.validate_tool_calls(&role, tool_calls)?;
         }
-        self.persist_memory_updates(&worker_result).await?;
         Ok(worker_result)
     }
 
     /// 第一阶段：Supervisor 路由
     async fn route(&self, text: &str) -> Result<MixedResult, AIError> {
+        self.emit_thinking(
+            AgentRole::Supervisor.as_label(),
+            "routing",
+            Some("正在判断应该由哪些专家处理".to_string()),
+        )
+        .await;
+
         let system_prompt = PromptBuilder::build_supervisor_prompt(&self.preferred_lang);
         let mut messages = vec![
             ChatMessage { role: "system".to_string(), content: system_prompt },
@@ -438,6 +504,13 @@ impl Orchestrator {
 
     /// 第二阶段：调用专家 Agent
     async fn call_worker(&self, role: AgentRole, text: &str) -> Result<MixedResult, AIError> {
+        self.emit_thinking(
+            role.as_label(),
+            "working",
+            Some("专家开始处理当前请求".to_string()),
+        )
+        .await;
+
         let tools = self.skill_registry.for_role_and_platform(&role, &self.platform);
         let system_prompt = match role {
             AgentRole::TaskAgent => PromptBuilder::build_task_agent_prompt(&self.preferred_lang, &tools),
@@ -481,9 +554,8 @@ impl Orchestrator {
     }
 }
 
-#[async_trait]
-impl AgentOrchestrator for Orchestrator {
-    async fn process_message(&self, text: String) -> Result<MixedResult, AIError> {
+impl Orchestrator {
+    pub async fn process_message_core(&self, text: String) -> Result<MixedResult, AIError> {
         // 1. 第一阶段：路由
         let route_info = self.route(&text).await?;
         let routed_agents = route_info.routed_agents.clone().unwrap_or_default();
@@ -493,6 +565,15 @@ impl AgentOrchestrator for Orchestrator {
                  chat_response: Some("抱歉，我没太明白您的意思。".to_string()),
                  ..Default::default()
              });
+        }
+
+        for agent in &routed_agents {
+            self.emit_thinking(
+                agent.as_label(),
+                "routing",
+                Some("已被路由选中，准备开始工作".to_string()),
+            )
+            .await;
         }
 
         // 2. 第二阶段：并行调度专家 (Section 4)
@@ -553,26 +634,78 @@ impl AgentOrchestrator for Orchestrator {
             }
         }
 
-        let memory_result = self.synthesize_memory(&text, &final_result).await?;
-        final_result.new_memories = memory_result.new_memories;
-        final_result.user_profile = memory_result.user_profile;
-        final_result.session_summary = memory_result.session_summary.or(final_result.session_summary);
-
-        self.persist_memory_updates(&final_result).await?;
         Ok(final_result)
     }
-}
 
-#[async_trait]
-impl ToolExecutor for Orchestrator {
-    async fn submit_tool_result(&self, tool_call_id: String, result_json: String) -> Result<MixedResult, AIError> {
+    pub async fn submit_tool_result_core(
+        &self,
+        tool_call_id: String,
+        result_json: String,
+    ) -> Result<(String, MixedResult), AIError> {
         let context = {
             let mut pending = self.pending_tool_calls.lock().await;
             pending.remove(&tool_call_id)
         }
         .ok_or_else(|| AIError::InvalidToolCall(format!("未找到待回灌的工具调用 {}", tool_call_id)))?;
 
-        self.continue_with_tool_observation(context.role, context.original_text, result_json).await
+        let original_text = context.original_text;
+        let result = self
+            .continue_with_tool_observation(context.role, original_text.clone(), result_json)
+            .await?;
+        Ok((original_text, result))
+    }
+
+    pub async fn synthesize_and_commit_memory(
+        &self,
+        original_text: String,
+        final_result: MixedResult,
+    ) -> Result<MemoryCommitResult, AIError> {
+        let _final_result = self
+            .finalize_result_with_memory(&original_text, final_result)
+            .await?;
+
+        let payload = self.memory_store.drain_pending_sync().await?;
+        let memory_sync_json = if payload.operations.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&payload).ok()
+        };
+
+        let mut commit_result = MemoryCommitResult {
+            new_revision: payload.next_revision,
+            memory_sync_json,
+            ..Default::default()
+        };
+
+        for operation in payload.operations {
+            match operation {
+                crate::domain::models::MemorySyncOperation::UpsertFragment { fragment } => {
+                    commit_result.added_memories.push(fragment.content);
+                }
+                crate::domain::models::MemorySyncOperation::ReplaceUserProfile { .. } => {
+                    commit_result.profile_updated = true;
+                }
+                crate::domain::models::MemorySyncOperation::DeleteFragment { .. } => {}
+            }
+        }
+
+        Ok(commit_result)
+    }
+}
+
+#[async_trait]
+impl AgentOrchestrator for Orchestrator {
+    async fn process_message(&self, text: String) -> Result<MixedResult, AIError> {
+        let result = self.process_message_core(text.clone()).await?;
+        self.finalize_result_with_memory(&text, result).await
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for Orchestrator {
+    async fn submit_tool_result(&self, tool_call_id: String, result_json: String) -> Result<MixedResult, AIError> {
+        let (original_text, result) = self.submit_tool_result_core(tool_call_id, result_json).await?;
+        self.finalize_result_with_memory(&original_text, result).await
     }
 }
 
@@ -857,6 +990,15 @@ mod tests {
                 "newMemories": [],
                 "userProfile": null,
                 "sessionSummary": "读取了已有任务并整理结果",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "本轮没有新增长期记忆",
                 "tasks": [],
                 "habits": [],
                 "toolCalls": []

@@ -2,11 +2,11 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use tokio::sync::Mutex;
 use tokio::runtime::Runtime;
-use crate::domain::traits::{AgentOrchestrator, MemoryStore, ToolExecutor};
+use crate::domain::traits::MemoryStore;
 use crate::infrastructure::llm_client::DeepSeekClient;
 use crate::infrastructure::memory_store::LocalMemoryStore;
 use crate::infrastructure::skill_registry::SkillRegistry;
-use crate::application::orchestrator::Orchestrator;
+use crate::application::orchestrator::{Orchestrator, OrchestratorProgressSink};
 pub use crate::interfaces::events::{CoreEvent, FFITask, FFIHabit};
 use crate::domain::models::{MemorySnapshot, MixedResult};
 
@@ -14,6 +14,24 @@ use crate::domain::models::{MemorySnapshot, MixedResult};
 
 pub trait CoreCallback: Send + Sync {
     fn on_event(&self, event: CoreEvent);
+}
+
+struct FfiProgressSink {
+    callback: Arc<Mutex<Option<Box<dyn CoreCallback>>>>,
+}
+
+#[async_trait::async_trait]
+impl OrchestratorProgressSink for FfiProgressSink {
+    async fn on_thinking(&self, agent_name: String, phase: String, message: Option<String>) {
+        let cb = self.callback.lock().await;
+        if let Some(callback) = cb.as_ref() {
+            callback.on_event(CoreEvent::OnThinking {
+                agent_name,
+                phase,
+                message,
+            });
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -63,6 +81,7 @@ impl DeadlinerCore {
 
         let memory_store = Arc::new(LocalMemoryStore::new(storage_dir));
         let llm_gateway = Arc::new(DeepSeekClient::new(api_key, base_url, model_id));
+        let callback = Arc::new(Mutex::new(None));
         let skills_dir = Self::workspace_root().join("skills");
         let skill_registry = Arc::new(
             SkillRegistry::load_from_dir(skills_dir).unwrap_or_else(|_| SkillRegistry::empty())
@@ -74,12 +93,15 @@ impl DeadlinerCore {
             platform,
             "zh-CN".to_string()
         ));
+        runtime.block_on(orchestrator.set_progress_sink(Arc::new(FfiProgressSink {
+            callback: callback.clone(),
+        })));
 
         Arc::new(Self {
             orchestrator,
             memory_store,
             runtime,
-            callback: Arc::new(Mutex::new(None)),
+            callback,
             latest_state: Arc::new(Mutex::new(LatestState::default())),
         })
     }
@@ -95,10 +117,18 @@ impl DeadlinerCore {
         let this = self.clone_for_spawn();
 
         runtime.spawn(async move {
-            this.send_event(CoreEvent::OnThinking { agent_name: "Supervisor".to_string() }).await;
+            match orchestrator.process_message_core(text.clone()).await {
+                Ok(result) => {
+                    let should_commit_memory =
+                        !matches!(result.tool_calls.as_ref(), Some(tool_calls) if !tool_calls.is_empty());
+                    let result_for_memory = result.clone();
 
-            match orchestrator.process_message(text.clone()).await {
-                Ok(result) => this.handle_mixed_result(text, result).await,
+                    this.handle_mixed_result(text.clone(), result).await;
+
+                    if should_commit_memory {
+                        this.commit_memory_after_finish(text, result_for_memory).await;
+                    }
+                }
                 Err(e) => this.send_event(CoreEvent::OnError { message: e.to_string() }).await,
             }
         });
@@ -110,8 +140,18 @@ impl DeadlinerCore {
         let this = self.clone_for_spawn();
 
         runtime.spawn(async move {
-            match orchestrator.submit_tool_result(id, result_json).await {
-                Ok(result) => this.handle_mixed_result(String::new(), result).await,
+            match orchestrator.submit_tool_result_core(id, result_json).await {
+                Ok((original_text, result)) => {
+                    let should_commit_memory =
+                        !matches!(result.tool_calls.as_ref(), Some(tool_calls) if !tool_calls.is_empty());
+                    let result_for_memory = result.clone();
+
+                    this.handle_mixed_result(original_text.clone(), result).await;
+
+                    if should_commit_memory {
+                        this.commit_memory_after_finish(original_text, result_for_memory).await;
+                    }
+                }
                 Err(e) => this.send_event(CoreEvent::OnError { message: e.to_string() }).await,
             }
         });
@@ -175,6 +215,12 @@ impl DeadlinerCore {
             if let Some(tool) = tool_calls.first() {
                 let tool_call_id = uuid::Uuid::new_v4().to_string();
                 if let Some(agent) = tool.agent.clone() {
+                    self.send_event(CoreEvent::OnThinking {
+                        agent_name: agent.as_label().to_string(),
+                        phase: "tool_wait".to_string(),
+                        message: Some("正在等待工具执行结果".to_string()),
+                    })
+                    .await;
                     self.orchestrator
                         .register_pending_tool_call(tool_call_id.clone(), agent, original_text)
                         .await;
@@ -202,25 +248,13 @@ impl DeadlinerCore {
             total_target: h.total_target,
         }).collect());
 
-        let memory_sync_json = self.memory_store
-            .drain_pending_sync()
-            .await
-            .ok()
-            .and_then(|payload| {
-                if payload.operations.is_empty() {
-                    None
-                } else {
-                    serde_json::to_string(&payload).ok()
-                }
-            });
-
         let finish_json = serde_json::json!({
             "primaryIntent": result.primary_intent.clone().unwrap_or_default(),
             "tasks": tasks.clone(),
             "habits": habits.clone(),
             "chatResponse": result.chat_response.clone(),
             "sessionSummary": result.session_summary.clone(),
-            "memorySyncJson": memory_sync_json.clone(),
+            "memorySyncJson": serde_json::Value::Null,
         })
         .to_string();
 
@@ -228,7 +262,7 @@ impl DeadlinerCore {
             let mut latest = self.latest_state.lock().await;
             latest.tasks = tasks.clone().unwrap_or_default();
             latest.habits = habits.clone().unwrap_or_default();
-            latest.memory_sync_json = memory_sync_json.clone();
+            latest.memory_sync_json = None;
             latest.finish_json = Some(finish_json);
         }
 
@@ -238,9 +272,39 @@ impl DeadlinerCore {
             habits,
             chat_response: result.chat_response,
             session_summary: result.session_summary,
-            memory_sync_json,
+            memory_sync_json: None,
         })
         .await;
+    }
+
+    async fn commit_memory_after_finish(&self, original_text: String, result: MixedResult) {
+        match self
+            .orchestrator
+            .synthesize_and_commit_memory(original_text, result)
+            .await
+        {
+            Ok(commit) => {
+                {
+                    let mut latest = self.latest_state.lock().await;
+                    latest.memory_sync_json = commit.memory_sync_json.clone();
+                }
+
+                if commit.memory_sync_json.is_some() {
+                    self.send_event(CoreEvent::OnMemoryCommitted {
+                        added_memories: commit.added_memories,
+                        profile_updated: commit.profile_updated,
+                        new_revision: commit.new_revision,
+                    })
+                    .await;
+                }
+            }
+            Err(e) => {
+                self.send_event(CoreEvent::OnError {
+                    message: e.to_string(),
+                })
+                .await;
+            }
+        }
     }
 
     async fn send_event(&self, event: CoreEvent) {

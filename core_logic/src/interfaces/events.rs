@@ -2,16 +2,25 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub enum CoreEvent {
-    OnThinking { agent_name: String },
+    OnThinking {
+        agent_name: String,
+        phase: String,
+        message: Option<String>,
+    },
     OnTextStream { chunk: String },
     OnToolRequest { id: String, tool_name: String, args_json: String },
-    OnFinish { 
+    OnFinish {
         primary_intent: String,
         tasks: Option<Vec<FFITask>>,
         habits: Option<Vec<FFIHabit>>,
         chat_response: Option<String>,
         session_summary: Option<String>,
         memory_sync_json: Option<String>,
+    },
+    OnMemoryCommitted {
+        added_memories: Vec<String>,
+        profile_updated: bool,
+        new_revision: u64,
     },
     OnError { message: String },
 }

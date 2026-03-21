@@ -1,9 +1,10 @@
-# Deadliner AI Core - Android Integration Guide
+# Deadliner AI Core Android 接入文档
 
-## 1. Recommended Consumption Pattern
-Treat this repository as a separately versioned engine workspace.
+## 1. 当前接入方式
 
-Recommended in another Android project:
+建议把本仓库作为独立引擎仓库接入 Android 项目。
+
+推荐在 Android 项目外层目录中执行：
 
 ```bash
 git submodule add <your-github-url>/deadliner_core.git vendor/deadliner_core
@@ -11,33 +12,34 @@ cd vendor/deadliner_core
 ./scripts/build_android.sh
 ```
 
-This produces:
+构建产物：
 
 - `dist/android/jniLibs/.../*.so`
 - `dist/android/bindings/*.kt`
 
-Then in Android Studio:
+接入时：
 
-1. Copy `jniLibs` into the Android module.
-2. Add the generated Kotlin bindings into a source set.
-3. Keep Rust engine updates isolated from app business code.
+1. 把 `jniLibs` 放进 Android module。
+2. 把生成的 Kotlin bindings 纳入源码目录。
+3. 把 Rust 引擎版本升级和业务代码解耦。
 
-## 2. Ownership Model
-Android owns persistence.
-Rust owns reasoning and orchestration.
+## 2. 职责划分
 
-Recommended native stores:
+建议的边界如下：
 
-- Room / SQLDelight / Realm for tasks, habits, memory
-- Rust only keeps a synchronized in-memory mirror for prompt context and write-back deltas
+- Rust 负责：意图识别、任务/习惯解析、工具编排、记忆推理
+- Android 负责：Room/SQLDelight/Realm 等本地持久化、UI 状态、系统能力
+- Rust 中记忆：只保留运行期同步镜像
 
-## 3. Build
+## 3. 构建
+
 ```bash
 cargo install cargo-ndk
 ./scripts/build_android.sh
 ```
 
-## 4. Initialization
+## 4. 初始化
+
 ```kotlin
 val storagePath = context.filesDir.absolutePath
 
@@ -50,9 +52,49 @@ val core = DeadlinerCore(
 )
 ```
 
-## 5. Memory Sync Protocol
-### Startup hydration
-Load the Android-side canonical snapshot and hydrate Rust:
+当前仓库默认配置口径：
+
+- `DEEPSEEK_API_KEY`
+- `DEEPSEEK_BASE_URL`
+- `DEEPSEEK_MODEL`
+
+## 5. 对外核心 API
+
+当前可直接使用的核心接口：
+
+- `setCallback(...)`
+- `processInput(...)`
+- `submitToolResult(...)`
+- `getLatestTasks()`
+- `getLatestHabits()`
+- `getLastMemorySyncJson()`
+- `getLastFinishJson()`
+- `getUserProfile()`
+- `replaceMemorySnapshot(...)`
+- `exportMemorySnapshot()`
+
+## 6. 事件模型
+
+当前实际事件与 iOS 保持一致：
+
+- `OnThinking`
+- `OnTextStream`
+- `OnToolRequest`
+- `OnFinish`
+- `OnMemoryCommitted`
+- `OnError`
+
+需要注意的实现细节：
+
+1. `OnFinish.memorySyncJson` 当前实现里是空值。
+2. 记忆提交结果通过 `OnMemoryCommitted` 单独通知。
+3. 记忆增量 JSON 需要通过 `getLastMemorySyncJson()` 主动读取。
+
+## 7. 记忆同步协议
+
+### 启动时注水
+
+Android 启动时先把本地权威快照写入 Rust：
 
 ```kotlin
 val snapshotJson = """
@@ -68,36 +110,45 @@ scope.launch {
 }
 ```
 
-### Delta write-back
-When Rust emits `OnFinish`, check `memorySyncJson`.
+### 增量回写
 
-If present:
+推荐处理顺序：
 
-1. Verify `baseRevision` matches the local Android memory revision.
-2. Apply every operation in one DB transaction.
-3. Advance local revision to `nextRevision`.
-4. If mismatch occurs, rebuild a full snapshot and call `replaceMemorySnapshot(...)`.
+1. 收到 `OnFinish` 后先更新页面状态。
+2. 收到 `OnMemoryCommitted` 后调用 `getLastMemorySyncJson()`。
+3. 若返回非空，则在本地数据库事务中应用增量。
 
-Supported operations:
+建议的事务逻辑：
+
+1. 校验 `baseRevision` 是否等于 Android 本地 revision
+2. 在一个事务中应用全部操作
+3. 成功后把 revision 推进到 `nextRevision`
+4. 一旦冲突，直接重建全量快照并重新执行 `replaceMemorySnapshot(...)`
+
+支持的操作类型：
 
 - `UpsertFragment`
 - `DeleteFragment`
 - `ReplaceUserProfile`
 
-### Full snapshot export
-If you need to compare or debug:
+### 全量导出
 
 ```kotlin
 val snapshotJson = core.exportMemorySnapshot()
 ```
 
-## 6. Callback Example
+## 8. 回调示例
+
 ```kotlin
 core.setCallback(object : CoreCallback {
     override fun onEvent(event: CoreEvent) {
         when (event) {
             is CoreEvent.OnThinking -> {
-                // show loading state
+                // 展示推理中状态
+            }
+
+            is CoreEvent.OnTextStream -> {
+                // 处理流式文本
             }
 
             is CoreEvent.OnToolRequest -> {
@@ -105,34 +156,26 @@ core.setCallback(object : CoreCallback {
             }
 
             is CoreEvent.OnFinish -> {
-                event.memorySyncJson?.let { applyMemoryDelta(it) }
                 val tasks = event.tasks
                 val habits = event.habits
                 val chat = event.chatResponse
             }
 
+            is CoreEvent.OnMemoryCommitted -> {
+                core.getLastMemorySyncJson()?.let { applyMemoryDelta(it) }
+            }
+
             is CoreEvent.OnError -> {
-                // show error
+                // 展示错误
             }
         }
     }
 })
 ```
 
-## 7. Pull-Based Fallback APIs
-During early integration, Android can also read the latest engine output directly:
+## 9. 工具结果回传
 
-- `getLatestTasks()`
-- `getLatestHabits()`
-- `getLastMemorySyncJson()`
-- `getLastFinishJson()`
-- `getUserProfile()`
-- `exportMemorySnapshot()`
-
-These are useful for debugging and incremental rollout before the callback flow is fully wired into app state.
-
-## 8. Tool Feedback
-When Android finishes a local repository query:
+当 Android 完成本地查询后：
 
 ```kotlin
 scope.launch {
@@ -140,3 +183,12 @@ scope.launch {
     core.submitToolResult(toolCallId, resultJson)
 }
 ```
+
+## 10. 渐进式接入建议
+
+推荐先跑通最小链路，再逐步补完：
+
+1. 先接 `processInput`、`OnToolRequest`、`submitToolResult`
+2. 再用 `getLatestTasks()` / `getLatestHabits()` 校验结果
+3. 接入 `OnFinish` 更新 UI
+4. 最后补 `replaceMemorySnapshot()`、`OnMemoryCommitted`、`getLastMemorySyncJson()`

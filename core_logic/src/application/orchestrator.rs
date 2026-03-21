@@ -1,13 +1,16 @@
+use crate::application::prompt_builder::PromptBuilder;
+use crate::domain::models::{
+    AIActionCall, AIError, AIToolCall, AgentRole, ChatMessage, ChatRequest, MixedResult,
+    ToolMetadata,
+};
+use crate::domain::traits::{AgentOrchestrator, LlmGateway, MemoryStore, ToolExecutor};
+use crate::infrastructure::skill_registry::SkillRegistry;
 use async_trait::async_trait;
 use futures::future::join_all;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::domain::models::{MixedResult, AIError, ChatRequest, ChatMessage, AgentRole, AIToolCall};
-use crate::domain::traits::{LlmGateway, AgentOrchestrator, ToolExecutor, MemoryStore};
-use crate::application::prompt_builder::PromptBuilder;
-use crate::infrastructure::skill_registry::SkillRegistry;
 
 #[async_trait]
 pub trait OrchestratorProgressSink: Send + Sync {
@@ -69,7 +72,8 @@ impl Orchestrator {
         };
 
         if let Some(sink) = sink {
-            sink.on_thinking(agent_name.to_string(), phase.to_string(), message).await;
+            sink.on_thinking(agent_name.to_string(), phase.to_string(), message)
+                .await;
         }
     }
 
@@ -115,16 +119,276 @@ impl Orchestrator {
     }
 
     fn looks_like_memory_statement(text: &str) -> bool {
-        let patterns = ["记住", "记一下", "以后", "我是", "我喜欢", "我习惯", "我通常", "请叫我"];
+        let patterns = [
+            "记住",
+            "记一下",
+            "以后",
+            "我是",
+            "我喜欢",
+            "我习惯",
+            "我通常",
+            "请叫我",
+        ];
         patterns.iter().any(|pattern| text.contains(pattern))
     }
 
     fn looks_like_profile_statement(text: &str) -> bool {
-        let patterns = ["我是", "我喜欢", "我习惯", "我通常", "偏好", "请叫我", "默认"];
+        let patterns = [
+            "我是",
+            "我喜欢",
+            "我习惯",
+            "我通常",
+            "偏好",
+            "请叫我",
+            "默认",
+        ];
         patterns.iter().any(|pattern| text.contains(pattern))
     }
 
-    fn validate_tool_calls(&self, role: &AgentRole, tool_calls: &[AIToolCall]) -> Result<(), AIError> {
+    fn looks_like_task_query(text: &str) -> bool {
+        let normalized = text.to_lowercase();
+        let exclusion_patterns = ["重复", "冲突", "是否已有", "有没有重复", "避免重复", "去重"];
+        let direct_patterns = [
+            "有哪些任务",
+            "有什么任务",
+            "任务列表",
+            "列出任务",
+            "看看任务",
+            "查看任务",
+            "总结任务",
+            "哪些待办",
+            "有什么待办",
+            "最近有什么任务",
+            "这周有什么任务",
+            "本周有什么任务",
+            "read my tasks",
+            "show my tasks",
+            "list my tasks",
+            "view my tasks",
+            "what are my tasks",
+            "what's on my task list",
+            "task list",
+            "my tasks",
+        ];
+        let query_verbs = [
+            "列出",
+            "查看",
+            "看看",
+            "总结",
+            "查询",
+            "盘点",
+            "read",
+            "show",
+            "list",
+            "view",
+            "summarize",
+        ];
+        let task_nouns = ["任务", "待办", "deadline", "ddl", "todo", "task", "tasks"];
+
+        if exclusion_patterns
+            .iter()
+            .any(|pattern| normalized.contains(pattern))
+        {
+            return false;
+        }
+
+        direct_patterns
+            .iter()
+            .any(|pattern| normalized.contains(pattern))
+            || (query_verbs.iter().any(|verb| normalized.contains(verb))
+                && task_nouns.iter().any(|noun| normalized.contains(noun)))
+    }
+
+    fn looks_like_habit_query(text: &str) -> bool {
+        let normalized = text.to_lowercase();
+        let patterns = [
+            "有哪些习惯",
+            "我的习惯",
+            "习惯列表",
+            "查看习惯",
+            "看看习惯",
+            "总结习惯",
+        ];
+        patterns.iter().any(|pattern| normalized.contains(pattern))
+    }
+
+    fn is_query_request(role: &AgentRole, text: &str) -> bool {
+        match role {
+            AgentRole::TaskAgent => Self::looks_like_task_query(text),
+            AgentRole::HabitAgent => Self::looks_like_habit_query(text),
+            _ => false,
+        }
+    }
+
+    fn summarize_tasks_for_query(tasks: &[crate::domain::models::AITask]) -> String {
+        if tasks.is_empty() {
+            return "当前没有查到相关任务。".to_string();
+        }
+
+        let summary = tasks
+            .iter()
+            .take(5)
+            .map(|task| match task.due_time.as_deref() {
+                Some(due) if !due.is_empty() => format!("{}（{}）", task.name, due),
+                _ => task.name.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join("；");
+
+        let suffix = if tasks.len() > 5 {
+            "；其余任务已省略。"
+        } else {
+            "。"
+        };
+        format!(
+            "我查到你当前有 {} 个相关任务：{}{}",
+            tasks.len(),
+            summary,
+            suffix
+        )
+    }
+
+    fn summarize_habits_for_query(habits: &[crate::domain::models::AIHabit]) -> String {
+        if habits.is_empty() {
+            return "当前没有查到相关习惯。".to_string();
+        }
+
+        let summary = habits
+            .iter()
+            .take(5)
+            .map(|habit| format!("{}（{}）", habit.name, habit.period))
+            .collect::<Vec<_>>()
+            .join("；");
+
+        let suffix = if habits.len() > 5 {
+            "；其余习惯已省略。"
+        } else {
+            "。"
+        };
+        format!(
+            "我查到你当前有 {} 个相关习惯：{}{}",
+            habits.len(),
+            summary,
+            suffix
+        )
+    }
+
+    fn normalize_query_result(role: &AgentRole, original_text: &str, result: &mut MixedResult) {
+        if !Self::is_query_request(role, original_text) {
+            return;
+        }
+
+        match role {
+            AgentRole::TaskAgent => {
+                let tasks = result.tasks.take().unwrap_or_default();
+                if result
+                    .chat_response
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .is_empty()
+                {
+                    result.chat_response = Some(Self::summarize_tasks_for_query(&tasks));
+                }
+                result.retrieved_tasks = Some(tasks);
+                result.tasks = Some(vec![]);
+            }
+            AgentRole::HabitAgent => {
+                let habits = result.habits.take().unwrap_or_default();
+                if result
+                    .chat_response
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .is_empty()
+                {
+                    result.chat_response = Some(Self::summarize_habits_for_query(&habits));
+                }
+                result.retrieved_habits = Some(habits);
+                result.habits = Some(vec![]);
+            }
+            _ => {}
+        }
+    }
+
+    fn resolve_read_context_tool(&self, role: &AgentRole) -> Result<ToolMetadata, AIError> {
+        let mut matches: Vec<_> = self
+            .skill_registry
+            .for_role_and_platform(role, &self.platform)
+            .into_iter()
+            .filter(|tool| !tool.requires_ui_confirmation)
+            .filter(|tool| tool.name.starts_with("read_"))
+            .collect();
+
+        matches.sort_by(|a, b| a.name.cmp(&b.name));
+
+        match matches.len() {
+            1 => Ok(matches.remove(0)),
+            0 => Err(AIError::ConfigError(format!(
+                "{} 在平台 {} 下未配置可用的读取类工具",
+                role.as_label(),
+                self.platform
+            ))),
+            _ => Err(AIError::ConfigError(format!(
+                "{} 在平台 {} 下存在多个读取类工具，无法将 READ_CONTEXT 唯一映射",
+                role.as_label(),
+                self.platform
+            ))),
+        }
+    }
+
+    fn normalize_actions_to_tool_calls(
+        &self,
+        role: &AgentRole,
+        result: &mut MixedResult,
+    ) -> Result<(), AIError> {
+        let actions = result.actions.take().unwrap_or_default();
+        if actions.is_empty() {
+            return Ok(());
+        }
+
+        let mut normalized_tool_calls = result.tool_calls.take().unwrap_or_default();
+
+        for action in actions {
+            let AIActionCall {
+                action,
+                args,
+                reason,
+            } = action;
+            match action.as_str() {
+                "READ_CONTEXT" => {
+                    let tool = self.resolve_read_context_tool(role)?;
+                    Self::validate_args_against_schema(&args, &tool.parameters, &tool.name)?;
+                    normalized_tool_calls.push(AIToolCall {
+                        agent: Some(role.clone()),
+                        tool: tool.name,
+                        args,
+                        reason,
+                    });
+                }
+                other => {
+                    return Err(AIError::InvalidToolCall(format!(
+                        "未知 action {}，当前仅支持 READ_CONTEXT",
+                        other
+                    )));
+                }
+            }
+        }
+
+        result.tool_calls = if normalized_tool_calls.is_empty() {
+            None
+        } else {
+            Some(normalized_tool_calls)
+        };
+
+        Ok(())
+    }
+
+    fn validate_tool_calls(
+        &self,
+        role: &AgentRole,
+        tool_calls: &[AIToolCall],
+    ) -> Result<(), AIError> {
         for tool_call in tool_calls {
             let tool = self
                 .skill_registry
@@ -283,7 +547,11 @@ impl Orchestrator {
         worker_result: &mut MixedResult,
     ) {
         if matches!(role, AgentRole::TaskAgent) {
-            let needs_fallback = worker_result.tasks.as_ref().map(|tasks| tasks.is_empty()).unwrap_or(true);
+            let needs_fallback = worker_result
+                .tasks
+                .as_ref()
+                .map(|tasks| tasks.is_empty())
+                .unwrap_or(true);
             if needs_fallback {
                 if let Some(tasks) = Self::observation_task_fallback(result_json) {
                     if !tasks.is_empty() {
@@ -325,24 +593,33 @@ impl Orchestrator {
         original_text: &str,
         final_result: &MixedResult,
     ) -> Result<MixedResult, AIError> {
-        self.emit_thinking("Supervisor", "memory", Some("正在整理并写入记忆".to_string()))
-            .await;
+        self.emit_thinking(
+            "Supervisor",
+            "memory",
+            Some("正在整理并写入记忆".to_string()),
+        )
+        .await;
 
         let system_prompt = PromptBuilder::build_memory_synthesizer_prompt(&self.preferred_lang);
-        let final_result_json = serde_json::to_string_pretty(final_result).map_err(|_| AIError::ParsingFailed)?;
+        let final_result_json =
+            serde_json::to_string_pretty(final_result).map_err(|_| AIError::ParsingFailed)?;
 
         let synthesis_prompt = format!(
             "原始用户输入：{}\n\n本轮已经确认的最终结构化结果：{}\n\n请只输出记忆相关 JSON。",
             original_text, final_result_json
         );
 
-        let mut messages = vec![
-            ChatMessage { role: "system".to_string(), content: system_prompt },
-        ];
+        let mut messages = vec![ChatMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+        }];
         if let Some(memory_message) = self.memory_context_message().await {
             messages.push(memory_message);
         }
-        messages.push(ChatMessage { role: "user".to_string(), content: synthesis_prompt });
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: synthesis_prompt,
+        });
 
         let request = ChatRequest {
             model: self.llm_gateway.get_model_name(),
@@ -351,14 +628,17 @@ impl Orchestrator {
         };
 
         let response = self.llm_gateway.chat(request).await?;
-        let content = response.choices.first()
+        let content = response
+            .choices
+            .first()
             .map(|c| c.message.content.clone())
             .ok_or(AIError::EmptyResponse)?;
 
         println!("DEBUG: Memory Synthesis Response: {}", content);
 
         let json_str = Self::extract_json(&content)?;
-        let memory_result: MixedResult = serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
+        let memory_result: MixedResult =
+            serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
         Ok(memory_result)
     }
 
@@ -410,10 +690,16 @@ impl Orchestrator {
         )
         .await;
 
-        let tools = self.skill_registry.for_role_and_platform(&role, &self.platform);
+        let tools = self
+            .skill_registry
+            .for_role_and_platform(&role, &self.platform);
         let system_prompt = match role {
-            AgentRole::TaskAgent => PromptBuilder::build_task_agent_prompt(&self.preferred_lang, &tools),
-            AgentRole::HabitAgent => PromptBuilder::build_habit_agent_prompt(&self.preferred_lang, &tools),
+            AgentRole::TaskAgent => {
+                PromptBuilder::build_task_agent_prompt(&self.preferred_lang, &tools)
+            }
+            AgentRole::HabitAgent => {
+                PromptBuilder::build_habit_agent_prompt(&self.preferred_lang, &tools)
+            }
             AgentRole::ChatAgent => PromptBuilder::build_chat_agent_prompt(&self.preferred_lang),
             _ => "你是 Deadliner AI 助手。".to_string(),
         };
@@ -432,17 +718,22 @@ impl Orchestrator {
 2. 如果工具结果里已经出现可直接使用的 tasks/habits，就应该优先吸收并输出，而不是返回空数组。
 3. 只有当工具结果明确表明没有相关数据，且用户输入也不足以生成结果时，才能输出空数组。
 4. 这一轮默认应该给最终答案；若信息已经足够，禁止再次输出 toolCalls。
-5. 只输出纯 JSON。"#,
+5. 如果原始用户输入是在查看/列出/总结已有内容，那么这是查询请求，不是新增请求。此时应优先输出 chatResponse，总结 observation；tasks/habits 应为空数组，除非用户明确要求新增或修改。
+6. 只输出纯 JSON。"#,
             original_text, result_json
         );
 
-        let mut messages = vec![
-            ChatMessage { role: "system".to_string(), content: system_prompt },
-        ];
+        let mut messages = vec![ChatMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+        }];
         if let Some(memory_message) = self.memory_context_message().await {
             messages.push(memory_message);
         }
-        messages.push(ChatMessage { role: "user".to_string(), content: observation_prompt });
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: observation_prompt,
+        });
 
         let request = ChatRequest {
             model: self.llm_gateway.get_model_name(),
@@ -451,15 +742,20 @@ impl Orchestrator {
         };
 
         let response = self.llm_gateway.chat(request).await?;
-        let content = response.choices.first()
+        let content = response
+            .choices
+            .first()
             .map(|c| c.message.content.clone())
             .ok_or(AIError::EmptyResponse)?;
 
         println!("DEBUG: Observation Response: {}", content);
 
         let json_str = Self::extract_json(&content)?;
-        let mut worker_result: MixedResult = serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
+        let mut worker_result: MixedResult =
+            serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
+        self.normalize_actions_to_tool_calls(&role, &mut worker_result)?;
         Self::apply_observation_fallback(&role, &result_json, &mut worker_result);
+        Self::normalize_query_result(&role, &original_text, &mut worker_result);
         if let Some(tool_calls) = &worker_result.tool_calls {
             self.validate_tool_calls(&role, tool_calls)?;
         }
@@ -476,13 +772,17 @@ impl Orchestrator {
         .await;
 
         let system_prompt = PromptBuilder::build_supervisor_prompt(&self.preferred_lang);
-        let mut messages = vec![
-            ChatMessage { role: "system".to_string(), content: system_prompt },
-        ];
+        let mut messages = vec![ChatMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+        }];
         if let Some(memory_message) = self.memory_context_message().await {
             messages.push(memory_message);
         }
-        messages.push(ChatMessage { role: "user".to_string(), content: text.to_string() });
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: text.to_string(),
+        });
 
         let request = ChatRequest {
             model: self.llm_gateway.get_model_name(),
@@ -491,14 +791,17 @@ impl Orchestrator {
         };
 
         let response = self.llm_gateway.chat(request).await?;
-        let content = response.choices.first()
+        let content = response
+            .choices
+            .first()
             .map(|c| c.message.content.clone())
             .ok_or(AIError::EmptyResponse)?;
 
         println!("DEBUG: Agent Response: {}", content);
 
         let json_str = Self::extract_json(&content)?;
-        let route_result: MixedResult = serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
+        let route_result: MixedResult =
+            serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
         Ok(route_result)
     }
 
@@ -511,20 +814,30 @@ impl Orchestrator {
         )
         .await;
 
-        let tools = self.skill_registry.for_role_and_platform(&role, &self.platform);
+        let tools = self
+            .skill_registry
+            .for_role_and_platform(&role, &self.platform);
         let system_prompt = match role {
-            AgentRole::TaskAgent => PromptBuilder::build_task_agent_prompt(&self.preferred_lang, &tools),
-            AgentRole::HabitAgent => PromptBuilder::build_habit_agent_prompt(&self.preferred_lang, &tools),
+            AgentRole::TaskAgent => {
+                PromptBuilder::build_task_agent_prompt(&self.preferred_lang, &tools)
+            }
+            AgentRole::HabitAgent => {
+                PromptBuilder::build_habit_agent_prompt(&self.preferred_lang, &tools)
+            }
             _ => "你是 Deadliner AI 助手。".to_string(),
         };
 
-        let mut messages = vec![
-            ChatMessage { role: "system".to_string(), content: system_prompt },
-        ];
+        let mut messages = vec![ChatMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+        }];
         if let Some(memory_message) = self.memory_context_message().await {
             messages.push(memory_message);
         }
-        messages.push(ChatMessage { role: "user".to_string(), content: text.to_string() });
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: text.to_string(),
+        });
 
         let request = ChatRequest {
             model: self.llm_gateway.get_model_name(),
@@ -533,7 +846,9 @@ impl Orchestrator {
         };
 
         let response = self.llm_gateway.chat(request).await?;
-        let content = response.choices.first()
+        let content = response
+            .choices
+            .first()
             .map(|c| c.message.content.clone())
             .ok_or(AIError::EmptyResponse)?;
 
@@ -544,6 +859,8 @@ impl Orchestrator {
             Err(_) if role == AgentRole::ChatAgent => Self::fallback_chat_result(text, &content),
             Err(err) => return Err(err),
         };
+        self.normalize_actions_to_tool_calls(&role, &mut worker_result)?;
+        Self::normalize_query_result(&role, text, &mut worker_result);
         if let Some(tool_calls) = &mut worker_result.tool_calls {
             self.validate_tool_calls(&role, tool_calls)?;
             for tool_call in tool_calls.iter_mut() {
@@ -561,10 +878,10 @@ impl Orchestrator {
         let routed_agents = route_info.routed_agents.clone().unwrap_or_default();
 
         if routed_agents.is_empty() {
-             return Ok(MixedResult {
-                 chat_response: Some("抱歉，我没太明白您的意思。".to_string()),
-                 ..Default::default()
-             });
+            return Ok(MixedResult {
+                chat_response: Some("抱歉，我没太明白您的意思。".to_string()),
+                ..Default::default()
+            });
         }
 
         for agent in &routed_agents {
@@ -603,6 +920,17 @@ impl Orchestrator {
                 current_habits.extend(habits);
                 final_result.habits = Some(current_habits);
             }
+            if let Some(retrieved_tasks) = worker_res.retrieved_tasks {
+                let mut current_retrieved_tasks = final_result.retrieved_tasks.unwrap_or_default();
+                current_retrieved_tasks.extend(retrieved_tasks);
+                final_result.retrieved_tasks = Some(current_retrieved_tasks);
+            }
+            if let Some(retrieved_habits) = worker_res.retrieved_habits {
+                let mut current_retrieved_habits =
+                    final_result.retrieved_habits.unwrap_or_default();
+                current_retrieved_habits.extend(retrieved_habits);
+                final_result.retrieved_habits = Some(current_retrieved_habits);
+            }
             if let Some(tool_calls) = worker_res.tool_calls {
                 let mut current_tool_calls = final_result.tool_calls.unwrap_or_default();
                 current_tool_calls.extend(tool_calls);
@@ -634,6 +962,25 @@ impl Orchestrator {
             }
         }
 
+        if final_result
+            .tasks
+            .as_ref()
+            .map(|tasks| tasks.is_empty())
+            .unwrap_or(true)
+            && final_result
+                .habits
+                .as_ref()
+                .map(|habits| habits.is_empty())
+                .unwrap_or(true)
+            && final_result
+                .chat_response
+                .as_deref()
+                .map(|chat| !chat.trim().is_empty())
+                .unwrap_or(false)
+        {
+            final_result.primary_intent = Some("Chat".to_string());
+        }
+
         Ok(final_result)
     }
 
@@ -646,12 +993,32 @@ impl Orchestrator {
             let mut pending = self.pending_tool_calls.lock().await;
             pending.remove(&tool_call_id)
         }
-        .ok_or_else(|| AIError::InvalidToolCall(format!("未找到待回灌的工具调用 {}", tool_call_id)))?;
+        .ok_or_else(|| {
+            AIError::InvalidToolCall(format!("未找到待回灌的工具调用 {}", tool_call_id))
+        })?;
 
         let original_text = context.original_text;
-        let result = self
+        let mut result = self
             .continue_with_tool_observation(context.role, original_text.clone(), result_json)
             .await?;
+        if result
+            .tasks
+            .as_ref()
+            .map(|tasks| tasks.is_empty())
+            .unwrap_or(true)
+            && result
+                .habits
+                .as_ref()
+                .map(|habits| habits.is_empty())
+                .unwrap_or(true)
+            && result
+                .chat_response
+                .as_deref()
+                .map(|chat| !chat.trim().is_empty())
+                .unwrap_or(false)
+        {
+            result.primary_intent = Some("Chat".to_string());
+        }
         Ok((original_text, result))
     }
 
@@ -703,9 +1070,16 @@ impl AgentOrchestrator for Orchestrator {
 
 #[async_trait]
 impl ToolExecutor for Orchestrator {
-    async fn submit_tool_result(&self, tool_call_id: String, result_json: String) -> Result<MixedResult, AIError> {
-        let (original_text, result) = self.submit_tool_result_core(tool_call_id, result_json).await?;
-        self.finalize_result_with_memory(&original_text, result).await
+    async fn submit_tool_result(
+        &self,
+        tool_call_id: String,
+        result_json: String,
+    ) -> Result<MixedResult, AIError> {
+        let (original_text, result) = self
+            .submit_tool_result_core(tool_call_id, result_json)
+            .await?;
+        self.finalize_result_with_memory(&original_text, result)
+            .await
     }
 }
 
@@ -875,7 +1249,10 @@ mod tests {
         );
 
         let user_input = "帮我记一下明天上午十点写 Rust 冒烟测试".to_string();
-        let initial_result = orchestrator.process_message(user_input.clone()).await.unwrap();
+        let initial_result = orchestrator
+            .process_message(user_input.clone())
+            .await
+            .unwrap();
 
         let tool_call = initial_result
             .tool_calls
@@ -906,6 +1283,66 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].name, "写 Rust 冒烟测试");
         assert_eq!(tasks[0].due_time.as_deref(), Some("2026-03-19 10:00"));
+    }
+
+    #[tokio::test]
+    async fn read_context_action_is_normalized_into_registered_read_tool() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "actions": [
+                    {
+                        "action": "READ_CONTEXT",
+                        "args": {
+                            "timeRangeDays": 7,
+                            "keywords": ["本周"]
+                        },
+                        "reason": "回答前先读取本地任务上下文"
+                    }
+                ],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "准备读取任务上下文",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let result = orchestrator
+            .process_message("那我这周有什么任务呀？".to_string())
+            .await
+            .unwrap();
+
+        let tool_call = result
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .cloned()
+            .expect("expected normalized tool call");
+
+        assert_eq!(tool_call.tool, "read_tasks");
+        assert_eq!(tool_call.args["timeRangeDays"], json!(7));
+        assert_eq!(tool_call.args["keywords"], json!(["本周"]));
+        assert_eq!(tool_call.agent, Some(AgentRole::TaskAgent));
     }
 
     #[tokio::test]
@@ -956,6 +1393,58 @@ mod tests {
         match err {
             AIError::InvalidToolCall(message) => {
                 assert!(message.contains("timeRangeDays"));
+            }
+            other => panic!("unexpected error: {}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_action_from_mock_response() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "actions": [
+                    {
+                        "action": "READ_TASK_LIST",
+                        "args": {
+                            "timeRangeDays": 7
+                        }
+                    }
+                ]
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": null,
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let err = orchestrator
+            .process_message("帮我看看这周任务".to_string())
+            .await
+            .expect_err("expected invalid action to fail");
+
+        match err {
+            AIError::InvalidToolCall(message) => {
+                assert!(message.contains("READ_TASK_LIST"));
             }
             other => panic!("unexpected error: {}", other),
         }
@@ -1016,7 +1505,10 @@ mod tests {
         );
 
         let user_input = "看看有没有重复任务".to_string();
-        let initial_result = orchestrator.process_message(user_input.clone()).await.unwrap();
+        let initial_result = orchestrator
+            .process_message(user_input.clone())
+            .await
+            .unwrap();
         let tool_call = initial_result
             .tool_calls
             .as_ref()
@@ -1068,6 +1560,256 @@ mod tests {
         assert_eq!(tasks[0].name, "开会");
         assert_eq!(tasks[0].due_time.as_deref(), Some("2026-03-20 15:00:00"));
         assert_eq!(tasks[1].name, "11111");
+    }
+
+    #[tokio::test]
+    async fn task_query_returns_chat_response_instead_of_task_proposals() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "actions": [
+                    {
+                        "action": "READ_CONTEXT",
+                        "args": {
+                            "timeRangeDays": 7
+                        },
+                        "reason": "需要先查看近期任务"
+                    }
+                ]
+            })
+            .to_string(),
+            json!({
+                "tasks": [
+                    {
+                        "name": "开会",
+                        "dueTime": "2026-03-20 15:00",
+                        "note": "用户提及的会议"
+                    },
+                    {
+                        "name": "准备后天下午3点的开发会议",
+                        "dueTime": "2026-03-21 15:00",
+                        "note": "需要提前准备会议议程和材料"
+                    }
+                ],
+                "actions": [],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "用户查看了任务列表",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let user_input = "那我这周有什么任务呀？".to_string();
+        let initial_result = orchestrator
+            .process_message_core(user_input.clone())
+            .await
+            .unwrap();
+        let tool_call = initial_result
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .cloned()
+            .expect("expected tool call");
+
+        orchestrator
+            .register_pending_tool_call(
+                "query-tool-call".to_string(),
+                tool_call.agent.unwrap_or(AgentRole::TaskAgent),
+                user_input,
+            )
+            .await;
+
+        let final_result = orchestrator
+            .submit_tool_result_core(
+                "query-tool-call".to_string(),
+                json!({
+                    "tasks": [
+                        {
+                            "notePreview": "用户提及的会议",
+                            "name": "开会",
+                            "id": 2,
+                            "due": "2026-03-20T15:00:00",
+                            "status": "OPEN"
+                        },
+                        {
+                            "notePreview": "",
+                            "name": "准备后天下午3点的开发会议",
+                            "id": 1,
+                            "due": "2026-03-21T15:00:00",
+                            "status": "OPEN"
+                        }
+                    ],
+                    "summary": {
+                        "count": 2,
+                        "dueSoon24h": 0,
+                        "overdue": 0
+                    }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap()
+            .1;
+
+        assert_eq!(final_result.primary_intent.as_deref(), Some("Chat"));
+        assert_eq!(
+            final_result.tasks.as_ref().map(|tasks| tasks.len()),
+            Some(0)
+        );
+        assert_eq!(
+            final_result
+                .retrieved_tasks
+                .as_ref()
+                .map(|tasks| tasks.len()),
+            Some(2)
+        );
+        assert!(
+            final_result
+                .chat_response
+                .as_deref()
+                .unwrap_or("")
+                .contains("2 个相关任务")
+        );
+    }
+
+    #[tokio::test]
+    async fn english_task_query_returns_chat_response_instead_of_task_proposals() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "actions": [
+                    {
+                        "action": "READ_CONTEXT",
+                        "args": {
+                            "timeRangeDays": 7
+                        },
+                        "reason": "Need to inspect recent tasks first."
+                    }
+                ]
+            })
+            .to_string(),
+            json!({
+                "tasks": [],
+                "chatResponse": "I found 3 tasks for you.",
+                "actions": [],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "User viewed the task list.",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let user_input = "Read my tasks".to_string();
+        let initial_result = orchestrator
+            .process_message_core(user_input.clone())
+            .await
+            .unwrap();
+        let tool_call = initial_result
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .cloned()
+            .expect("expected tool call");
+
+        orchestrator
+            .register_pending_tool_call(
+                "english-query-tool-call".to_string(),
+                tool_call.agent.unwrap_or(AgentRole::TaskAgent),
+                user_input,
+            )
+            .await;
+
+        let final_result = orchestrator
+            .submit_tool_result_core(
+                "english-query-tool-call".to_string(),
+                json!({
+                    "tasks": [
+                        {
+                            "notePreview": "用户提及的会议",
+                            "name": "开会",
+                            "id": 2,
+                            "due": "2026-03-20T15:00:00",
+                            "status": "OPEN"
+                        },
+                        {
+                            "notePreview": "需要提前准备会议议程和材料",
+                            "name": "准备后天下午3点的开发会议",
+                            "id": 1,
+                            "due": "2026-03-21T15:00:00",
+                            "status": "OPEN"
+                        }
+                    ],
+                    "summary": {
+                        "count": 2,
+                        "dueSoon24h": 0,
+                        "overdue": 0
+                    }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap()
+            .1;
+
+        assert_eq!(final_result.primary_intent.as_deref(), Some("Chat"));
+        assert_eq!(
+            final_result.tasks.as_ref().map(|tasks| tasks.len()),
+            Some(0)
+        );
+        assert_eq!(
+            final_result
+                .retrieved_tasks
+                .as_ref()
+                .map(|tasks| tasks.len()),
+            Some(2)
+        );
+        assert!(
+            final_result
+                .chat_response
+                .as_deref()
+                .unwrap_or("")
+                .contains("I found 3 tasks")
+        );
     }
 
     #[tokio::test]

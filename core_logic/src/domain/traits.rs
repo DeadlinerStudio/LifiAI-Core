@@ -1,8 +1,8 @@
-use async_trait::async_trait;
 use crate::domain::models::{
     AIError, ChatRequest, ChatResponse, MemoryFragment, MemorySnapshot, MemorySyncPayload,
     MixedResult,
 };
+use async_trait::async_trait;
 
 /// 大模型网关接口
 /// 抽象了具体的 LLM 实现（如 DeepSeek, OpenAI）
@@ -23,7 +23,11 @@ pub trait AgentOrchestrator: Send + Sync {
 /// 在原生端执行完工具后，通过此接口回灌数据
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
-    async fn submit_tool_result(&self, tool_call_id: String, result_json: String) -> Result<MixedResult, AIError>;
+    async fn submit_tool_result(
+        &self,
+        tool_call_id: String,
+        result_json: String,
+    ) -> Result<MixedResult, AIError>;
 }
 
 /// 内存存储接口 (MemoryBank 的 Rust 实现契约)

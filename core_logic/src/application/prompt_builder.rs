@@ -1,5 +1,5 @@
-use chrono::Local;
 use crate::domain::models::{DEFAULT_TIME_FORMAT, ToolMetadata};
+use chrono::Local;
 
 pub struct PromptBuilder;
 
@@ -9,8 +9,7 @@ impl PromptBuilder {
             return "【当前可用工具 Schema】\n[]".to_string();
         }
 
-        let tool_json = serde_json::to_string_pretty(tools)
-            .unwrap_or_else(|_| "[]".to_string());
+        let tool_json = serde_json::to_string_pretty(tools).unwrap_or_else(|_| "[]".to_string());
 
         format!("【当前可用工具 Schema】\n{}", tool_json)
     }
@@ -51,16 +50,15 @@ impl PromptBuilder {
             - **严禁** 提取任何带有“每天”、“每周”、“养成习惯”等周期性字眼的内容。
             - 仅提取有明确截止时间或近期要完成的单次事项。
             - 若输入中没有单次任务，请返回 {{"tasks": []}}。
-            - 只有在确实需要本地数据辅助判断时，才允许输出 toolCalls。
-            - 如果输出 toolCalls，tool 字段必须严格等于上方 JSON 里某个工具的 name，args 必须符合该工具的 parameters schema。
+            - 如果用户是在“查看/列出/总结已有任务”，这是查询请求，不是新增请求；优先输出 actions 去读取上下文，并在最终结果里输出 chatResponse，tasks 应为空数组。
+            - 如果只是想先读取本地任务上下文，禁止自己编造工具名；改为输出 actions，且 action 只能填 "READ_CONTEXT"。
+            - 当 action="READ_CONTEXT" 时，args 必须直接遵守上方某个读取类工具的 parameters schema。
+            - 除了明确的写操作或变更操作外，不要输出 toolCalls。
             
             必须输出 JSON：
-            {{ "tasks": [{{ "name": "...", "dueTime": "{}", "note": "..." }}], "toolCalls": [{{ "tool": "...", "args": {{}}, "reason": "..." }}] }}
+            {{ "tasks": [{{ "name": "...", "dueTime": "{}", "note": "..." }}], "chatResponse": "...", "actions": [{{ "action": "READ_CONTEXT", "args": {{}}, "reason": "..." }}], "toolCalls": [] }}
             "#,
-            now,
-            preferred_lang,
-            tools_section,
-            DEFAULT_TIME_FORMAT
+            now, preferred_lang, tools_section, DEFAULT_TIME_FORMAT
         )
     }
 
@@ -79,14 +77,15 @@ impl PromptBuilder {
             - habits 中的每一项都**必须**包含 goalType 字段，禁止省略。
             - 如果用户表达的是次数型目标（如“每天 8 杯水”、“每周 3 次跑步”），goalType 必须输出 "COUNT"。
             - 如果存在总量目标，额外输出 totalTarget；如果没有总量目标，totalTarget 可以为 null。
-            - 只有在确实需要本地数据辅助判断时，才允许输出 toolCalls。
-            - 如果输出 toolCalls，tool 字段必须严格等于上方 JSON 里某个工具的 name，args 必须符合该工具的 parameters schema。
+            - 如果用户是在“查看/列出/总结已有习惯”，这是查询请求，不是新增请求；优先输出 actions 去读取上下文，并在最终结果里输出 chatResponse，habits 应为空数组。
+            - 如果只是想先读取本地习惯上下文，禁止自己编造工具名；改为输出 actions，且 action 只能填 "READ_CONTEXT"。
+            - 当 action="READ_CONTEXT" 时，args 必须直接遵守上方某个读取类工具的 parameters schema。
+            - 除了明确的写操作或变更操作外，不要输出 toolCalls。
             
             必须输出 JSON：
-            {{ "habits": [{{ "name": "...", "period": "DAILY", "timesPerPeriod": 1, "goalType": "COUNT", "totalTarget": null }}], "toolCalls": [{{ "tool": "...", "args": {{}}, "reason": "..." }}] }}
+            {{ "habits": [{{ "name": "...", "period": "DAILY", "timesPerPeriod": 1, "goalType": "COUNT", "totalTarget": null }}], "chatResponse": "...", "actions": [{{ "action": "READ_CONTEXT", "args": {{}}, "reason": "..." }}], "toolCalls": [] }}
             "#,
-            preferred_lang,
-            tools_section
+            preferred_lang, tools_section
         )
     }
 

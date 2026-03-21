@@ -1,14 +1,14 @@
-use std::sync::Arc;
-use std::path::PathBuf;
-use tokio::sync::Mutex;
-use tokio::runtime::Runtime;
+use crate::application::orchestrator::{Orchestrator, OrchestratorProgressSink};
+use crate::domain::models::{MemorySnapshot, MixedResult};
 use crate::domain::traits::MemoryStore;
 use crate::infrastructure::llm_client::DeepSeekClient;
 use crate::infrastructure::memory_store::LocalMemoryStore;
 use crate::infrastructure::skill_registry::SkillRegistry;
-use crate::application::orchestrator::{Orchestrator, OrchestratorProgressSink};
-pub use crate::interfaces::events::{CoreEvent, FFITask, FFIHabit};
-use crate::domain::models::{MemorySnapshot, MixedResult};
+pub use crate::interfaces::events::{CoreEvent, FFIHabit, FFITask};
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::runtime::Runtime;
+use tokio::sync::Mutex;
 
 // MARK: - Callback Trait
 
@@ -38,6 +38,8 @@ impl OrchestratorProgressSink for FfiProgressSink {
 struct LatestState {
     tasks: Vec<FFITask>,
     habits: Vec<FFIHabit>,
+    retrieved_tasks: Vec<FFITask>,
+    retrieved_habits: Vec<FFIHabit>,
     memory_sync_json: Option<String>,
     finish_json: Option<String>,
 }
@@ -84,14 +86,14 @@ impl DeadlinerCore {
         let callback = Arc::new(Mutex::new(None));
         let skills_dir = Self::workspace_root().join("skills");
         let skill_registry = Arc::new(
-            SkillRegistry::load_from_dir(skills_dir).unwrap_or_else(|_| SkillRegistry::empty())
+            SkillRegistry::load_from_dir(skills_dir).unwrap_or_else(|_| SkillRegistry::empty()),
         );
         let orchestrator = Arc::new(Orchestrator::new(
-            llm_gateway, 
-            memory_store.clone() as Arc<dyn MemoryStore>, 
+            llm_gateway,
+            memory_store.clone() as Arc<dyn MemoryStore>,
             skill_registry,
             platform,
-            "zh-CN".to_string()
+            "zh-CN".to_string(),
         ));
         runtime.block_on(orchestrator.set_progress_sink(Arc::new(FfiProgressSink {
             callback: callback.clone(),
@@ -165,6 +167,14 @@ impl DeadlinerCore {
         self.latest_state.blocking_lock().habits.clone()
     }
 
+    pub fn get_latest_retrieved_tasks(&self) -> Vec<FFITask> {
+        self.latest_state.blocking_lock().retrieved_tasks.clone()
+    }
+
+    pub fn get_latest_retrieved_habits(&self) -> Vec<FFIHabit> {
+        self.latest_state.blocking_lock().retrieved_habits.clone()
+    }
+
     pub fn get_last_memory_sync_json(&self) -> Option<String> {
         self.latest_state.blocking_lock().memory_sync_json.clone()
     }
@@ -175,7 +185,10 @@ impl DeadlinerCore {
 
     pub fn get_user_profile(&self) -> String {
         self.runtime.block_on(async {
-            self.memory_store.get_user_profile().await.unwrap_or_default()
+            self.memory_store
+                .get_user_profile()
+                .await
+                .unwrap_or_default()
         })
     }
 
@@ -186,7 +199,10 @@ impl DeadlinerCore {
 
         runtime.spawn(async move {
             let result = match serde_json::from_str::<MemorySnapshot>(&snapshot_json) {
-                Ok(snapshot) => memory_store.replace_snapshot(snapshot).await.map_err(|_| CoreError::ParsingFailed),
+                Ok(snapshot) => memory_store
+                    .replace_snapshot(snapshot)
+                    .await
+                    .map_err(|_| CoreError::ParsingFailed),
                 Err(_) => Err(CoreError::ParsingFailed),
             };
 
@@ -206,7 +222,9 @@ impl DeadlinerCore {
                 .await
                 .ok()
                 .and_then(|snapshot| serde_json::to_string(&snapshot).ok())
-                .unwrap_or_else(|| "{\"revision\":0,\"fragments\":[],\"userProfile\":\"\"}".to_string())
+                .unwrap_or_else(|| {
+                    "{\"revision\":0,\"fragments\":[],\"userProfile\":\"\"}".to_string()
+                })
         })
     }
 
@@ -225,33 +243,66 @@ impl DeadlinerCore {
                         .register_pending_tool_call(tool_call_id.clone(), agent, original_text)
                         .await;
                 }
-                self.send_event(CoreEvent::OnToolRequest { 
+                self.send_event(CoreEvent::OnToolRequest {
                     id: tool_call_id,
                     tool_name: tool.tool.clone(),
                     args_json: tool.args.to_string(),
-                }).await;
+                })
+                .await;
                 return;
             }
         }
 
-        let tasks = result.tasks.map(|ts| ts.into_iter().map(|t| FFITask {
-            name: t.name,
-            due_time: t.due_time,
-            note: t.note,
-        }).collect());
+        let tasks = result.tasks.map(|ts| {
+            ts.into_iter()
+                .map(|t| FFITask {
+                    name: t.name,
+                    due_time: t.due_time,
+                    note: t.note,
+                })
+                .collect()
+        });
 
-        let habits = result.habits.map(|hs| hs.into_iter().map(|h| FFIHabit {
-            name: h.name,
-            period: h.period,
-            times_per_period: h.times_per_period,
-            goal_type: h.goal_type,
-            total_target: h.total_target,
-        }).collect());
+        let habits = result.habits.map(|hs| {
+            hs.into_iter()
+                .map(|h| FFIHabit {
+                    name: h.name,
+                    period: h.period,
+                    times_per_period: h.times_per_period,
+                    goal_type: h.goal_type,
+                    total_target: h.total_target,
+                })
+                .collect()
+        });
+
+        let retrieved_tasks = result.retrieved_tasks.map(|ts| {
+            ts.into_iter()
+                .map(|t| FFITask {
+                    name: t.name,
+                    due_time: t.due_time,
+                    note: t.note,
+                })
+                .collect()
+        });
+
+        let retrieved_habits = result.retrieved_habits.map(|hs| {
+            hs.into_iter()
+                .map(|h| FFIHabit {
+                    name: h.name,
+                    period: h.period,
+                    times_per_period: h.times_per_period,
+                    goal_type: h.goal_type,
+                    total_target: h.total_target,
+                })
+                .collect()
+        });
 
         let finish_json = serde_json::json!({
             "primaryIntent": result.primary_intent.clone().unwrap_or_default(),
             "tasks": tasks.clone(),
             "habits": habits.clone(),
+            "retrievedTasks": retrieved_tasks.clone(),
+            "retrievedHabits": retrieved_habits.clone(),
             "chatResponse": result.chat_response.clone(),
             "sessionSummary": result.session_summary.clone(),
             "memorySyncJson": serde_json::Value::Null,
@@ -262,6 +313,8 @@ impl DeadlinerCore {
             let mut latest = self.latest_state.lock().await;
             latest.tasks = tasks.clone().unwrap_or_default();
             latest.habits = habits.clone().unwrap_or_default();
+            latest.retrieved_tasks = retrieved_tasks.clone().unwrap_or_default();
+            latest.retrieved_habits = retrieved_habits.clone().unwrap_or_default();
             latest.memory_sync_json = None;
             latest.finish_json = Some(finish_json);
         }
@@ -270,6 +323,8 @@ impl DeadlinerCore {
             primary_intent: result.primary_intent.unwrap_or_default(),
             tasks,
             habits,
+            retrieved_tasks,
+            retrieved_habits,
             chat_response: result.chat_response,
             session_summary: result.session_summary,
             memory_sync_json: None,

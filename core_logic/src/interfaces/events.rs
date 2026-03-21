@@ -7,12 +7,20 @@ pub enum CoreEvent {
         phase: String,
         message: Option<String>,
     },
-    OnTextStream { chunk: String },
-    OnToolRequest { id: String, tool_name: String, args_json: String },
+    OnTextStream {
+        chunk: String,
+    },
+    OnToolRequest {
+        id: String,
+        tool_name: String,
+        args_json: String,
+    },
     OnFinish {
         primary_intent: String,
         tasks: Option<Vec<FFITask>>,
         habits: Option<Vec<FFIHabit>>,
+        retrieved_tasks: Option<Vec<FFITask>>,
+        retrieved_habits: Option<Vec<FFIHabit>>,
         chat_response: Option<String>,
         session_summary: Option<String>,
         memory_sync_json: Option<String>,
@@ -22,7 +30,9 @@ pub enum CoreEvent {
         profile_updated: bool,
         new_revision: u64,
     },
-    OnError { message: String },
+    OnError {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

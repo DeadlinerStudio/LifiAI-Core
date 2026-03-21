@@ -28,12 +28,20 @@ pub enum CoreEvent {
         phase: String,
         message: Option<String>,
     },
-    OnTextStream { chunk: String },
-    OnToolRequest { id: String, tool_name: String, args_json: String },
+    OnTextStream {
+        chunk: String,
+    },
+    OnToolRequest {
+        id: String,
+        tool_name: String,
+        args_json: String,
+    },
     OnFinish {
         primary_intent: String,
         tasks: Option<Vec<FFITask>>,
         habits: Option<Vec<FFIHabit>>,
+        retrieved_tasks: Option<Vec<FFITask>>,
+        retrieved_habits: Option<Vec<FFIHabit>>,
         chat_response: Option<String>,
         session_summary: Option<String>,
         memory_sync_json: Option<String>,
@@ -43,7 +51,9 @@ pub enum CoreEvent {
         profile_updated: bool,
         new_revision: u64,
     },
-    OnError { message: String },
+    OnError {
+        message: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -204,6 +214,8 @@ impl From<inner_events::CoreEvent> for CoreEvent {
                 primary_intent,
                 tasks,
                 habits,
+                retrieved_tasks,
+                retrieved_habits,
                 chat_response,
                 session_summary,
                 memory_sync_json,
@@ -211,6 +223,10 @@ impl From<inner_events::CoreEvent> for CoreEvent {
                 primary_intent,
                 tasks: tasks.map(|items| items.into_iter().map(Into::into).collect()),
                 habits: habits.map(|items| items.into_iter().map(Into::into).collect()),
+                retrieved_tasks: retrieved_tasks
+                    .map(|items| items.into_iter().map(Into::into).collect()),
+                retrieved_habits: retrieved_habits
+                    .map(|items| items.into_iter().map(Into::into).collect()),
                 chat_response,
                 session_summary,
                 memory_sync_json,

@@ -35,6 +35,36 @@ cargo run -p uniffi-bindgen -- \
   --language swift \
   --out-dir "${BINDINGS_DIR}"
 
+SWIFT_BINDING="${BINDINGS_DIR}/${LIB_NAME}.swift"
+
+echo "==> Patching generated Swift bindings for Xcode future callback compatibility"
+python3 - <<'PY' "${SWIFT_BINDING}"
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+
+needle = "fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: Int8) {"
+wrapper = """fileprivate let uniffiFutureContinuationCallbackFn: UniffiRustFutureContinuationCallback = { handle, pollResult in
+    uniffiFutureContinuationCallback(handle: handle, pollResult: pollResult)
+}
+
+"""
+
+if "uniffiFutureContinuationCallbackFn" not in text:
+    if needle not in text:
+        raise SystemExit(f"expected marker not found in {path}")
+    text = text.replace(needle, wrapper + needle, 1)
+
+text = text.replace(
+    "                uniffiFutureContinuationCallback,\n",
+    "                uniffiFutureContinuationCallbackFn,\n",
+)
+
+path.write_text(text)
+PY
+
 echo "==> Preparing XCFramework headers"
 cp "${BINDINGS_DIR}/${FFI_HEADER_NAME}" "${HEADERS_DIR}/${FFI_HEADER_NAME}"
 cp "${BINDINGS_DIR}/${FFI_MODULEMAP_NAME}" "${HEADERS_DIR}/module.modulemap"

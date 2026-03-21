@@ -1,9 +1,10 @@
-# Deadliner AI Core - iOS Integration Guide
+# Deadliner AI Core iOS 接入文档
 
-## 1. Recommended Repo Layout
-Use this repository as an external engine workspace, not as code pasted into the iOS app target.
+## 1. 当前接入方式
 
-Recommended in another project directory:
+建议把本仓库作为独立引擎仓库接入，而不是把 Rust 代码直接拷进 iOS 工程。
+
+推荐在你的 iOS 项目外层目录中执行：
 
 ```bash
 git submodule add <your-github-url>/deadliner_core.git Vendor/deadliner_core
@@ -11,46 +12,41 @@ cd Vendor/deadliner_core
 ./scripts/build_ios_xc.sh
 ```
 
-This produces:
+构建产物：
 
 - `dist/ios/ffi_uniffi.xcframework`
 - `dist/ios/bindings/*.swift`
 
-Then in Xcode:
+在 Xcode 中：
 
-1. Drag `ffi_uniffi.xcframework` into the app project.
-2. Add the generated Swift files from `dist/ios/bindings/`.
-3. Keep the Rust repo outside the app business code. Rebuild the framework only when the engine changes.
+1. 把 `ffi_uniffi.xcframework` 拖入工程。
+2. 把 `dist/ios/bindings/` 下生成的 Swift 文件加入 app target。
+3. 引擎升级时只重新构建产物，不把业务代码和 Rust 引擎混在一起。
 
-## 2. Runtime Ownership Model
-Rust is the reasoning engine.
-iOS is the source of truth for persistence.
+## 2. 职责划分
 
-Recommended ownership:
+当前建议的职责边界如下：
 
-- Tasks / habits / memory persistence: Swift / CoreData / SQLite / Realm
-- LLM orchestration / prompt / tool routing: Rust
-- Memory storage in Rust: session mirror only
+- Rust 负责：LLM 调用、意图解析、工具编排、记忆推理
+- iOS 负责：任务/习惯/记忆的持久化、UI 状态管理、系统能力调用
+- Rust 中的记忆存储：仅作为会话期间的同步镜像
 
-That means the app should hydrate memory into Rust on launch, and persist Rust deltas after each finished turn.
+也就是说，iOS 仍然是持久化数据的最终真相源，Rust 只是运行期推理引擎。
 
-## 3. Build
-From the repo root:
+## 3. 构建
+
+首次构建前需要准备 iOS target：
 
 ```bash
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 ./scripts/build_ios_xc.sh
 ```
 
-## 4. Initialization
+## 4. 初始化
+
+当前构造函数签名如下：
+
 ```swift
-import Foundation
-
-let storagePath = FileManager.default
-    .urls(for: .documentDirectory, in: .userDomainMask)
-    .first!
-    .path
-
 let core = DeadlinerCore(
     apiKey: "...",
     baseUrl: "https://api.deepseek.com/v1",
@@ -60,9 +56,62 @@ let core = DeadlinerCore(
 )
 ```
 
-## 5. Memory Sync Protocol
-### Startup hydration
-At app launch, load the platform snapshot and send it into Rust:
+建议 `storagePath` 使用应用沙盒内可写目录，例如：
+
+```swift
+import Foundation
+
+let storagePath = FileManager.default
+    .urls(for: .documentDirectory, in: .userDomainMask)
+    .first!
+    .path
+```
+
+目前仓库默认使用 DeepSeek，对应环境变量口径为：
+
+- `DEEPSEEK_API_KEY`
+- `DEEPSEEK_BASE_URL`
+- `DEEPSEEK_MODEL`
+
+## 5. 对外核心 API
+
+当前 UniFFI 导出的主要能力如下：
+
+- `setCallback(_:)`
+- `processInput(text:)`
+- `submitToolResult(id:resultJson:)`
+- `getLatestTasks()`
+- `getLatestHabits()`
+- `getLastMemorySyncJson()`
+- `getLastFinishJson()`
+- `getUserProfile()`
+- `replaceMemorySnapshot(snapshotJson:)`
+- `exportMemorySnapshot()`
+
+## 6. 事件模型
+
+当前实际事件为：
+
+- `OnThinking { agentName, phase, message }`
+- `OnTextStream { chunk }`
+- `OnToolRequest { id, toolName, argsJson }`
+- `OnFinish { primaryIntent, tasks, habits, chatResponse, sessionSummary, memorySyncJson }`
+- `OnMemoryCommitted { addedMemories, profileUpdated, newRevision }`
+- `OnError { message }`
+
+需要特别注意：
+
+1. `OnFinish.memorySyncJson` 当前实现里固定为 `nil`。
+2. 记忆提交完成后，会通过单独的 `OnMemoryCommitted` 事件通知。
+3. 真正的记忆增量 JSON 需要通过 `getLastMemorySyncJson()` 拉取。
+
+也就是说，iOS 侧不要再假设“`OnFinish` 一到就一定携带记忆增量”。
+
+## 7. 记忆同步协议
+
+### 启动时全量注水
+
+应用启动时，先从 iOS 本地数据库读取权威快照，再灌入 Rust：
 
 ```swift
 let snapshotJson = """
@@ -86,61 +135,66 @@ Task {
 }
 ```
 
-### Delta write-back
-When `OnFinish` arrives, inspect `memorySyncJson`.
+### 完成后增量回写
 
-If it is not `nil`, apply the operations to native storage transactionally, then native storage becomes the new source of truth.
+当前推荐的处理方式是：
 
-Operation shapes:
+1. 收到 `OnFinish` 后更新任务、习惯和聊天输出。
+2. 再监听 `OnMemoryCommitted`。
+3. 收到 `OnMemoryCommitted` 后，调用 `getLastMemorySyncJson()` 取回最近一次记忆增量。
+4. 如果增量不为空，在本地数据库中事务性应用该增量。
+
+增量应用建议流程：
+
+1. 读取本地 `revision`
+2. 校验它是否等于 `baseRevision`
+3. 在一个事务中应用全部操作
+4. 把本地版本号推进到 `nextRevision`
+5. 如果版本不一致，放弃本次增量并重新执行一次全量 `replaceMemorySnapshot(...)`
+
+当前文档口径支持的操作类型：
 
 - `UpsertFragment`
 - `DeleteFragment`
 - `ReplaceUserProfile`
 
-Suggested native handling:
+### 调试导出
 
-1. Read `baseRevision`.
-2. Verify it matches your local memory revision.
-3. Apply operations in one transaction.
-4. Advance local revision to `nextRevision`.
-5. If revisions diverge, ignore the delta and rehydrate Rust with a full snapshot.
-
-### Full resync
-If the app modifies memory outside Rust, call:
-
-```swift
-await core.replaceMemorySnapshot(snapshotJson: latestSnapshotJson)
-```
-
-You can also inspect the Rust-side mirror:
+如果你要对比 Rust 内部镜像状态，可以直接拉全量快照：
 
 ```swift
 let snapshotJson = core.exportMemorySnapshot()
 ```
 
-## 6. Callback Example
+## 8. 回调示例
+
 ```swift
 final class AICoordinator: CoreCallback {
     func onEvent(event: CoreEvent) {
         switch event {
-        case .onThinking(let agentName):
-            print("Thinking: \(agentName)")
+        case .onThinking(let agentName, let phase, let message):
+            print("thinking", agentName, phase, message ?? "")
+
+        case .onTextStream(let chunk):
+            print("stream", chunk)
 
         case .onToolRequest(let id, let toolName, let argsJson):
             handleTool(id: id, toolName: toolName, argsJson: argsJson)
 
-        case .onFinish(let primaryIntent, let tasks, let habits, let chatResponse, let sessionSummary, let memorySyncJson):
-            if let memorySyncJson {
-                applyMemoryDelta(memorySyncJson)
-            }
+        case .onFinish(let primaryIntent, let tasks, let habits, let chatResponse, let sessionSummary, _):
             print(primaryIntent)
             print(tasks ?? [])
             print(habits ?? [])
             print(chatResponse ?? "")
             print(sessionSummary ?? "")
 
+        case .onMemoryCommitted(_, _, _):
+            if let memorySyncJson = core.getLastMemorySyncJson() {
+                applyMemoryDelta(memorySyncJson)
+            }
+
         case .onError(let message):
-            print("Error: \(message)")
+            print("error", message)
 
         default:
             break
@@ -149,20 +203,16 @@ final class AICoordinator: CoreCallback {
 }
 ```
 
-## 7. Pull-Based Fallback APIs
-If you want a simpler first integration before fully wiring callback-driven state management, these APIs are available:
+## 9. 工具回调
 
-- `getLatestTasks()`
-- `getLatestHabits()`
-- `getLastMemorySyncJson()`
-- `getLastFinishJson()`
-- `getUserProfile()`
-- `exportMemorySnapshot()`
+当 Rust 发出 `OnToolRequest` 后，iOS 侧应：
 
-This is useful during native debugging, snapshot testing, or when you want to verify Rust output before integrating full reducer/state logic.
+1. 解析 `toolName` 与 `argsJson`
+2. 查询本地仓库或系统能力
+3. 把结果序列化成 JSON
+4. 回调给 Rust
 
-## 8. Tool Feedback
-When Swift finishes a local tool query:
+示例：
 
 ```swift
 Task {
@@ -170,3 +220,12 @@ Task {
     await core.submitToolResult(id: toolCallId, resultJson: resultJson)
 }
 ```
+
+## 10. 渐进式接入建议
+
+如果你想先把链路跑通，再逐步做完整状态管理，建议顺序如下：
+
+1. 先接 `processInput` + `OnToolRequest` + `submitToolResult`
+2. 用 `getLatestTasks()` / `getLatestHabits()` 验证引擎输出
+3. 再接 `OnFinish` 更新 UI
+4. 最后接入 `replaceMemorySnapshot()`、`OnMemoryCommitted` 和 `getLastMemorySyncJson()`

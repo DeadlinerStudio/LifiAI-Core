@@ -1,15 +1,15 @@
+use crate::domain::models::{
+    AIError, MAX_MEMORY_AGE_DAYS, MAX_MEMORY_FRAGMENTS, MemoryFragment, MemorySnapshot,
+    MemorySyncOperation, MemorySyncPayload,
+};
+use crate::domain::traits::MemoryStore;
 use async_trait::async_trait;
+use chrono::{Duration, Utc};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Serialize, Deserialize};
-use crate::domain::models::{
-    AIError, MemoryFragment, MemorySnapshot, MemorySyncOperation, MemorySyncPayload,
-    MAX_MEMORY_AGE_DAYS, MAX_MEMORY_FRAGMENTS,
-};
-use crate::domain::traits::MemoryStore;
-use chrono::{Utc, Duration};
 
 #[derive(Serialize, Deserialize, Default)]
 struct StorageData {
@@ -106,10 +106,15 @@ impl MemoryStore for LocalMemoryStore {
 
         let fragment = MemoryFragment::new(content, category);
         data.fragments.push(fragment);
-        let fragment = data.fragments.last().cloned().ok_or(AIError::ParsingFailed)?;
+        let fragment = data
+            .fragments
+            .last()
+            .cloned()
+            .ok_or(AIError::ParsingFailed)?;
         data.revision += 1;
-        data.pending_sync.push(MemorySyncOperation::UpsertFragment { fragment });
-        
+        data.pending_sync
+            .push(MemorySyncOperation::UpsertFragment { fragment });
+
         drop(data); // 释放写锁以便执行 prune
         self.prune_memories().await;
         self.save_to_disk().await?;
@@ -126,9 +131,8 @@ impl MemoryStore for LocalMemoryStore {
         data.user_profile = profile.trim().to_string();
         let profile = data.user_profile.clone();
         data.revision += 1;
-        data.pending_sync.push(MemorySyncOperation::ReplaceUserProfile {
-            profile,
-        });
+        data.pending_sync
+            .push(MemorySyncOperation::ReplaceUserProfile { profile });
         drop(data);
         self.save_to_disk().await?;
         Ok(())
@@ -152,7 +156,9 @@ impl MemoryStore for LocalMemoryStore {
         }
 
         if !data.fragments.is_empty() {
-            let bullets: Vec<String> = data.fragments.iter()
+            let bullets: Vec<String> = data
+                .fragments
+                .iter()
                 .rev()
                 .take(6)
                 .map(|f| format!("- {}", f.content))

@@ -116,10 +116,13 @@ pub struct MixedResult {
     pub routed_agents: Option<Vec<AgentRole>>,
     pub tasks: Option<Vec<AITask>>,
     pub habits: Option<Vec<AIHabit>>,
+    pub retrieved_tasks: Option<Vec<AITask>>,
+    pub retrieved_habits: Option<Vec<AIHabit>>,
     pub new_memories: Option<Vec<String>>,
     pub chat_response: Option<String>,
     pub session_summary: Option<String>,
     pub user_profile: Option<String>,
+    pub actions: Option<Vec<AIActionCall>>,
     pub tool_calls: Option<Vec<AIToolCall>>,
 }
 
@@ -176,6 +179,14 @@ impl fmt::Display for AIError {
 impl std::error::Error for AIError {}
 
 // MARK: - Tool Calls
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AIActionCall {
+    pub action: String,
+    pub args: serde_json::Value,
+    pub reason: Option<String>,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

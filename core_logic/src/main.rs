@@ -241,12 +241,10 @@ async fn run_mock_demo(platform: String) -> Result<(), Box<dyn std::error::Error
 }
 
 async fn run_real_mode(platform: String) -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = std::env::var("DEEPSEEK_API_KEY")
-        .expect("❌ 请在 .env 中设置 DEEPSEEK_API_KEY");
+    let api_key = std::env::var("DEEPSEEK_API_KEY").expect("❌ 请在 .env 中设置 DEEPSEEK_API_KEY");
     let base_url = std::env::var("DEEPSEEK_BASE_URL")
         .unwrap_or_else(|_| "https://api.deepseek.com/v1".to_string());
-    let model = std::env::var("DEEPSEEK_MODEL")
-        .unwrap_or_else(|_| "deepseek-chat".to_string());
+    let model = std::env::var("DEEPSEEK_MODEL").unwrap_or_else(|_| "deepseek-chat".to_string());
 
     println!("🚀 Deadliner AI Core 正在连接 DeepSeek API (多 Agent 模式)...");
 
@@ -285,8 +283,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = workspace_root();
     let _ = from_path_override(root.join(".env"));
 
-    let platform = std::env::var("DEADLINER_PLATFORM")
-        .unwrap_or_else(|_| "ios".to_string());
+    let platform = std::env::var("DEADLINER_PLATFORM").unwrap_or_else(|_| "ios".to_string());
     let use_mock = std::env::var("DEADLINER_USE_MOCK")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);

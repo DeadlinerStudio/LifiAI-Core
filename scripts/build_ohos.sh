@@ -10,7 +10,14 @@ mkdir -p "${OUT_DIR}"
 cd "${ROOT_DIR}"
 
 if command -v ohrs >/dev/null 2>&1; then
+  if [[ -z "${OHOS_NDK_HOME:-}" ]]; then
+    echo "error: OHOS_NDK_HOME is not set. Export your OpenHarmony NDK path before running this script." >&2
+    echo "hint: run 'ohrs doctor' to verify the rest of the toolchain requirements." >&2
+    exit 1
+  fi
+
   echo "==> Building OpenHarmony package for ${PACKAGE_NAME} with ohrs"
+  echo "==> Using reqwest with rustls TLS to avoid target OpenSSL toolchain requirements"
   ohrs build -p "${PACKAGE_NAME}"
   echo "==> ohrs build finished. Check the generated dist output from ohrs."
 else

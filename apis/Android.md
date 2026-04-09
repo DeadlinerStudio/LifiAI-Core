@@ -17,6 +17,10 @@ cd vendor/deadliner_core
 - `dist/android/jniLibs/.../*.so`
 - `dist/android/bindings/*.kt`
 
+当前默认 Kotlin 包名：
+
+- `com.aritxonly.deadliner.lifi`
+
 接入时：
 
 1. 把 `jniLibs` 放进 Android module。
@@ -35,6 +39,15 @@ cd vendor/deadliner_core
 
 ```bash
 cargo install cargo-ndk
+./scripts/build_android.sh
+```
+
+如需显式覆盖构建参数：
+
+```bash
+CRATE_NAME=ffi_uniffi \
+LIB_NAME=ffi_uniffi \
+KOTLIN_PACKAGE=com.aritxonly.deadliner.lifi \
 ./scripts/build_android.sh
 ```
 

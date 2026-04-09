@@ -2,6 +2,7 @@
   "name": "read_tasks",
   "description": "读取用户本地的任务列表，用于去重、冲突检测或补充上下文。",
   "domain": "TaskAgent",
+  "capabilities": ["READ_TASK_CONTEXT"],
   "supportedPlatforms": ["ios", "android", "harmony"],
   "requiresUiConfirmation": false,
   "parameters": {

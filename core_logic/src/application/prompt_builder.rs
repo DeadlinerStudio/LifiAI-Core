@@ -50,13 +50,14 @@ impl PromptBuilder {
             - **严禁** 提取任何带有“每天”、“每周”、“养成习惯”等周期性字眼的内容。
             - 仅提取有明确截止时间或近期要完成的单次事项。
             - 若输入中没有单次任务，请返回 {{"tasks": []}}。
-            - 如果用户是在“查看/列出/总结已有任务”，这是查询请求，不是新增请求；优先输出 actions 去读取上下文，并在最终结果里输出 chatResponse，tasks 应为空数组。
-            - 如果只是想先读取本地任务上下文，禁止自己编造工具名；改为输出 actions，且 action 只能填 "READ_CONTEXT"。
-            - 当 action="READ_CONTEXT" 时，args 必须直接遵守上方某个读取类工具的 parameters schema。
+            - 如果用户是在“查看/列出/总结已有任务”，这是查询请求，不是新增请求；优先输出 requestedCapabilities 去请求上下文，并在最终结果里输出 chatResponse，tasks 应为空数组。
+            - 如果只是想先读取本地任务上下文，禁止自己编造工具名；改为输出 requestedCapabilities，且 capability 只能填 "READ_TASK_CONTEXT"。
+            - requestedCapabilities 可选输出 executionMode，且只能是 "AUTO" | "ASK_USER" | "NEVER"。若省略则交给系统决定。
+            - 当 capability="READ_TASK_CONTEXT" 时，args 必须直接遵守上方某个读取类工具的 parameters schema。
             - 除了明确的写操作或变更操作外，不要输出 toolCalls。
             
             必须输出 JSON：
-            {{ "tasks": [{{ "name": "...", "dueTime": "{}", "note": "..." }}], "chatResponse": "...", "actions": [{{ "action": "READ_CONTEXT", "args": {{}}, "reason": "..." }}], "toolCalls": [] }}
+            {{ "tasks": [{{ "name": "...", "dueTime": "{}", "note": "..." }}], "chatResponse": "...", "requestedCapabilities": [{{ "capability": "READ_TASK_CONTEXT", "executionMode": "AUTO", "args": {{}}, "reason": "..." }}], "toolCalls": [] }}
             "#,
             now, preferred_lang, tools_section, DEFAULT_TIME_FORMAT
         )
@@ -77,13 +78,14 @@ impl PromptBuilder {
             - habits 中的每一项都**必须**包含 goalType 字段，禁止省略。
             - 如果用户表达的是次数型目标（如“每天 8 杯水”、“每周 3 次跑步”），goalType 必须输出 "COUNT"。
             - 如果存在总量目标，额外输出 totalTarget；如果没有总量目标，totalTarget 可以为 null。
-            - 如果用户是在“查看/列出/总结已有习惯”，这是查询请求，不是新增请求；优先输出 actions 去读取上下文，并在最终结果里输出 chatResponse，habits 应为空数组。
-            - 如果只是想先读取本地习惯上下文，禁止自己编造工具名；改为输出 actions，且 action 只能填 "READ_CONTEXT"。
-            - 当 action="READ_CONTEXT" 时，args 必须直接遵守上方某个读取类工具的 parameters schema。
+            - 如果用户是在“查看/列出/总结已有习惯”，这是查询请求，不是新增请求；优先输出 requestedCapabilities 去请求上下文，并在最终结果里输出 chatResponse，habits 应为空数组。
+            - 如果只是想先读取本地习惯上下文，禁止自己编造工具名；改为输出 requestedCapabilities，且 capability 只能填 "READ_HABIT_CONTEXT"。
+            - requestedCapabilities 可选输出 executionMode，且只能是 "AUTO" | "ASK_USER" | "NEVER"。若省略则交给系统决定。
+            - 当 capability="READ_HABIT_CONTEXT" 时，args 必须直接遵守上方某个读取类工具的 parameters schema。
             - 除了明确的写操作或变更操作外，不要输出 toolCalls。
             
             必须输出 JSON：
-            {{ "habits": [{{ "name": "...", "period": "DAILY", "timesPerPeriod": 1, "goalType": "COUNT", "totalTarget": null }}], "chatResponse": "...", "actions": [{{ "action": "READ_CONTEXT", "args": {{}}, "reason": "..." }}], "toolCalls": [] }}
+            {{ "habits": [{{ "name": "...", "period": "DAILY", "timesPerPeriod": 1, "goalType": "COUNT", "totalTarget": null }}], "chatResponse": "...", "requestedCapabilities": [{{ "capability": "READ_HABIT_CONTEXT", "executionMode": "AUTO", "args": {{}}, "reason": "..." }}], "toolCalls": [] }}
             "#,
             preferred_lang, tools_section
         )

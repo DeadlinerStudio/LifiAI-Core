@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-check:
+    name: Rust Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cargo check
+        run: cargo check --workspace
+
+      - name: Cargo test
+        run: cargo test -p core_logic
+
+  android-build:
+    name: Android Bindings Build
+    runs-on: ubuntu-latest
+    needs: rust-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-linux-androideabi,aarch64-linux-android,x86_64-linux-android
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build Android artifacts
+        env:
+          CRATE_NAME: ffi_uniffi
+          LIB_NAME: ffi_uniffi
+          KOTLIN_PACKAGE: com.aritxonly.deadliner.lifi
+        run: ./scripts/build_android.sh
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deadliner-android-artifacts
+          path: dist/android
+          if-no-files-found: error
+
+  ios-build:
+    name: iOS XCFramework Build
+    runs-on: macos-14
+    needs: rust-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build iOS artifacts
+        env:
+          PACKAGE_NAME: ffi_uniffi
+          LIB_NAME: ffi_uniffi
+        run: ./scripts/build_ios_xc.sh
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deadliner-ios-artifacts
+          path: dist/ios
+          if-no-files-found: error
+
+  harmony-build:
+    name: Harmony Build
+    runs-on: ubuntu-latest
+    needs: rust-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check Harmony FFI crate
+        run: cargo check -p ffi_ohos
+
+      - name: Build Harmony artifacts
+        env:
+          PACKAGE_NAME: ffi_ohos
+          LIB_NAME: ffi_ohos
+        run: ./scripts/build_ohos.sh
+
+      - name: Upload Harmony artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deadliner-harmony-artifacts
+          path: dist/ohos
+          if-no-files-found: error

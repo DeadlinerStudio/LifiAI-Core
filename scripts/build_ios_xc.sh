@@ -40,12 +40,20 @@ SWIFT_BINDING="${BINDINGS_DIR}/${LIB_NAME}.swift"
 echo "==> Patching generated Swift bindings for Xcode future callback compatibility"
 python3 - <<'PY' "${SWIFT_BINDING}"
 from pathlib import Path
+import re
 import sys
 
 path = Path(sys.argv[1])
 text = path.read_text()
 
-needle = "fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: Int8) {"
+declaration_pattern = re.compile(
+    r"((?:fileprivate|private)\s+func\s+uniffiFutureContinuationCallback\s*\(\s*handle:\s*UInt64\s*,\s*pollResult:\s*Int8\s*\)\s*\{)",
+    re.MULTILINE,
+)
+callsite_pattern = re.compile(
+    r"(^\s*)uniffiFutureContinuationCallback,\s*$",
+    re.MULTILINE,
+)
 wrapper = """fileprivate let uniffiFutureContinuationCallbackFn: UniffiRustFutureContinuationCallback = { handle, pollResult in
     uniffiFutureContinuationCallback(handle: handle, pollResult: pollResult)
 }
@@ -53,14 +61,14 @@ wrapper = """fileprivate let uniffiFutureContinuationCallbackFn: UniffiRustFutur
 """
 
 if "uniffiFutureContinuationCallbackFn" not in text:
-    if needle not in text:
-        raise SystemExit(f"expected marker not found in {path}")
-    text = text.replace(needle, wrapper + needle, 1)
+    match = declaration_pattern.search(text)
+    if match:
+        text = text[:match.start()] + wrapper + match.group(1) + text[match.end():]
 
-text = text.replace(
-    "                uniffiFutureContinuationCallback,\n",
-    "                uniffiFutureContinuationCallbackFn,\n",
-)
+if callsite_pattern.search(text):
+    text = callsite_pattern.sub(r"\1uniffiFutureContinuationCallbackFn,", text)
+else:
+    print(f"warning: future continuation callback callsite not found in {path}; skipping compatibility patch")
 
 path.write_text(text)
 PY

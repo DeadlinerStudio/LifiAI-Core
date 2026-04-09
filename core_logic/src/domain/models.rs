@@ -37,9 +37,44 @@ pub struct ToolMetadata {
     pub name: String,
     pub description: String,
     pub domain: AgentRole,
+    #[serde(default)]
+    pub capabilities: Vec<ToolCapability>,
     pub supported_platforms: Vec<String>,
     pub requires_ui_confirmation: bool,
     pub parameters: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ToolCapability {
+    ReadTaskContext,
+    ReadHabitContext,
+    UpdateTaskDeadline,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CapabilityExecutionMode {
+    Auto,
+    AskUser,
+    Never,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedToolCandidate {
+    pub capability: ToolCapability,
+    pub tool: ToolMetadata,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolExecutionPlan {
+    pub capability: ToolCapability,
+    pub tool_name: String,
+    pub args: serde_json::Value,
+    pub requires_ui_confirmation: bool,
+    pub execution_mode: CapabilityExecutionMode,
 }
 
 // MARK: - AI 提取结果模型
@@ -122,8 +157,44 @@ pub struct MixedResult {
     pub chat_response: Option<String>,
     pub session_summary: Option<String>,
     pub user_profile: Option<String>,
+    pub requested_capabilities: Option<Vec<CapabilityRequest>>,
     pub actions: Option<Vec<AIActionCall>>,
     pub tool_calls: Option<Vec<AIToolCall>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannerResult {
+    pub primary_intent: Option<String>,
+    pub routed_agents: Option<Vec<AgentRole>>,
+    pub tasks: Option<Vec<AITask>>,
+    pub habits: Option<Vec<AIHabit>>,
+    pub chat_response: Option<String>,
+    pub new_memories: Option<Vec<String>>,
+    pub session_summary: Option<String>,
+    pub user_profile: Option<String>,
+    pub requested_capabilities: Option<Vec<CapabilityRequest>>,
+    pub actions: Option<Vec<AIActionCall>>,
+    pub tool_calls: Option<Vec<AIToolCall>>,
+}
+
+impl From<PlannerResult> for MixedResult {
+    fn from(value: PlannerResult) -> Self {
+        Self {
+            primary_intent: value.primary_intent,
+            routed_agents: value.routed_agents,
+            tasks: value.tasks,
+            habits: value.habits,
+            chat_response: value.chat_response,
+            new_memories: value.new_memories,
+            session_summary: value.session_summary,
+            user_profile: value.user_profile,
+            requested_capabilities: value.requested_capabilities,
+            actions: value.actions,
+            tool_calls: value.tool_calls,
+            ..Default::default()
+        }
+    }
 }
 
 // MARK: - API 请求/响应模型
@@ -183,9 +254,20 @@ impl std::error::Error for AIError {}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AIActionCall {
+    // Legacy compatibility path. New planner outputs should prefer requestedCapabilities.
     pub action: String,
     pub args: serde_json::Value,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityRequest {
+    pub capability: ToolCapability,
+    pub args: serde_json::Value,
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub execution_mode: Option<CapabilityExecutionMode>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -195,6 +277,7 @@ pub struct AIToolCall {
     pub tool: String,
     pub args: serde_json::Value,
     pub reason: Option<String>,
+    pub execution_mode: Option<CapabilityExecutionMode>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

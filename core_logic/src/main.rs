@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use core_logic::application::orchestrator::Orchestrator;
 use core_logic::domain::models::{
     AIError, AgentRole, ChatChoice, ChatMessage, ChatRequest, ChatResponse, MemoryFragment,
-    MemorySnapshot, MemorySyncPayload, MixedResult, ToolMetadata,
+    MemorySnapshot, MemorySyncPayload, MixedResult, ToolCapability, ToolMetadata,
 };
 use core_logic::domain::traits::{AgentOrchestrator, LlmGateway, MemoryStore, ToolExecutor};
 use core_logic::infrastructure::llm_client::DeepSeekClient;
@@ -103,6 +103,7 @@ fn build_demo_registry() -> Arc<SkillRegistry> {
         name: "read_tasks".to_string(),
         description: "读取任务列表，用于判断是否重复。".to_string(),
         domain: AgentRole::TaskAgent,
+        capabilities: vec![ToolCapability::ReadTaskContext],
         supported_platforms: vec![
             "ios".to_string(),
             "android".to_string(),
@@ -257,7 +258,7 @@ async fn run_real_mode(platform: String) -> Result<(), Box<dyn std::error::Error
 
     let memory_store: Arc<dyn MemoryStore> = Arc::new(LocalMemoryStore::new(storage_dir));
     let llm_gateway: Arc<dyn LlmGateway> = Arc::new(DeepSeekClient::new(api_key, base_url, model));
-    let skill_registry = Arc::new(SkillRegistry::load_from_dir(skills_dir)?);
+    let skill_registry = Arc::new(SkillRegistry::load_from_dir_or_builtin(skills_dir)?);
 
     let orchestrator = Orchestrator::new(
         llm_gateway,

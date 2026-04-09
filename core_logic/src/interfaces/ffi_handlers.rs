@@ -1,5 +1,5 @@
 use crate::application::orchestrator::{Orchestrator, OrchestratorProgressSink};
-use crate::domain::models::{MemorySnapshot, MixedResult};
+use crate::domain::models::{CapabilityExecutionMode, MemorySnapshot, MixedResult};
 use crate::domain::traits::MemoryStore;
 use crate::infrastructure::llm_client::DeepSeekClient;
 use crate::infrastructure::memory_store::LocalMemoryStore;
@@ -86,7 +86,8 @@ impl DeadlinerCore {
         let callback = Arc::new(Mutex::new(None));
         let skills_dir = Self::workspace_root().join("skills");
         let skill_registry = Arc::new(
-            SkillRegistry::load_from_dir(skills_dir).unwrap_or_else(|_| SkillRegistry::empty()),
+            SkillRegistry::load_from_dir_or_builtin(skills_dir)
+                .unwrap_or_else(|_| SkillRegistry::builtin()),
         );
         let orchestrator = Arc::new(Orchestrator::new(
             llm_gateway,
@@ -246,7 +247,10 @@ impl DeadlinerCore {
                 self.send_event(CoreEvent::OnToolRequest {
                     id: tool_call_id,
                     tool_name: tool.tool.clone(),
-                    args_json: tool.args.to_string(),
+                    args_json: Self::tool_request_args_json(
+                        &tool.args,
+                        tool.execution_mode.as_ref(),
+                    ),
                 })
                 .await;
                 return;
@@ -377,6 +381,31 @@ impl DeadlinerCore {
             callback: self.callback.clone(),
             latest_state: self.latest_state.clone(),
         }
+    }
+
+    fn tool_request_args_json(
+        args: &serde_json::Value,
+        execution_mode: Option<&CapabilityExecutionMode>,
+    ) -> String {
+        let mut payload = args.clone();
+
+        if let Some(mode) = execution_mode {
+            if let Some(object) = payload.as_object_mut() {
+                let mode_str = match mode {
+                    CapabilityExecutionMode::Auto => "AUTO",
+                    CapabilityExecutionMode::AskUser => "ASK_USER",
+                    CapabilityExecutionMode::Never => "NEVER",
+                };
+                object.insert(
+                    "_meta".to_string(),
+                    serde_json::json!({
+                        "executionMode": mode_str
+                    }),
+                );
+            }
+        }
+
+        payload.to_string()
     }
 }
 

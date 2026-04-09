@@ -1,7 +1,7 @@
 use crate::application::prompt_builder::PromptBuilder;
 use crate::domain::models::{
-    AIActionCall, AIError, AIToolCall, AgentRole, ChatMessage, ChatRequest, MixedResult,
-    ToolMetadata,
+    AIActionCall, AIError, AIToolCall, AgentRole, CapabilityExecutionMode, CapabilityRequest,
+    ChatMessage, ChatRequest, MixedResult, PlannerResult, ToolCapability,
 };
 use crate::domain::traits::{AgentOrchestrator, LlmGateway, MemoryStore, ToolExecutor};
 use crate::infrastructure::skill_registry::SkillRegistry;
@@ -97,11 +97,11 @@ impl Orchestrator {
         }
     }
 
-    fn fallback_chat_result(text: &str, content: &str) -> MixedResult {
+    fn fallback_chat_result(text: &str, content: &str) -> PlannerResult {
         let trimmed_text = text.trim();
         let trimmed_content = content.trim();
 
-        let mut result = MixedResult {
+        let mut result = PlannerResult {
             primary_intent: Some("Chat".to_string()),
             chat_response: Some(trimmed_content.to_string()),
             ..Default::default()
@@ -311,30 +311,72 @@ impl Orchestrator {
         }
     }
 
-    fn resolve_read_context_tool(&self, role: &AgentRole) -> Result<ToolMetadata, AIError> {
-        let mut matches: Vec<_> = self
-            .skill_registry
-            .for_role_and_platform(role, &self.platform)
-            .into_iter()
-            .filter(|tool| !tool.requires_ui_confirmation)
-            .filter(|tool| tool.name.starts_with("read_"))
-            .collect();
-
-        matches.sort_by(|a, b| a.name.cmp(&b.name));
-
-        match matches.len() {
-            1 => Ok(matches.remove(0)),
-            0 => Err(AIError::ConfigError(format!(
-                "{} 在平台 {} 下未配置可用的读取类工具",
-                role.as_label(),
-                self.platform
-            ))),
+    fn read_context_capability(role: &AgentRole) -> Result<ToolCapability, AIError> {
+        match role {
+            AgentRole::TaskAgent => Ok(ToolCapability::ReadTaskContext),
+            AgentRole::HabitAgent => Ok(ToolCapability::ReadHabitContext),
             _ => Err(AIError::ConfigError(format!(
-                "{} 在平台 {} 下存在多个读取类工具，无法将 READ_CONTEXT 唯一映射",
-                role.as_label(),
-                self.platform
+                "{} 当前不支持 READ_CONTEXT capability 解析",
+                role.as_label()
             ))),
         }
+    }
+
+    fn normalize_requested_capabilities_to_tool_calls(
+        &self,
+        role: &AgentRole,
+        result: &mut MixedResult,
+    ) -> Result<(), AIError> {
+        let requests = result.requested_capabilities.take().unwrap_or_default();
+        if requests.is_empty() {
+            return Ok(());
+        }
+
+        let mut normalized_tool_calls = result.tool_calls.take().unwrap_or_default();
+
+        for request in requests {
+            let CapabilityRequest {
+                capability,
+                args,
+                reason,
+                execution_mode,
+            } = request;
+            let plan = self.skill_registry.resolve_execution_plan(
+                role,
+                &self.platform,
+                &capability,
+                args,
+                execution_mode,
+            )?;
+            if matches!(plan.execution_mode, CapabilityExecutionMode::Never) {
+                continue;
+            }
+            let tool = self
+                .skill_registry
+                .find_for_role_and_platform(role, &self.platform, &plan.tool_name)
+                .ok_or_else(|| {
+                    AIError::ConfigError(format!(
+                        "无法根据 execution plan 回查工具 {}",
+                        plan.tool_name
+                    ))
+                })?;
+            Self::validate_args_against_schema(&plan.args, &tool.parameters, &tool.name)?;
+            normalized_tool_calls.push(AIToolCall {
+                agent: Some(role.clone()),
+                tool: plan.tool_name,
+                args: plan.args,
+                reason,
+                execution_mode: Some(plan.execution_mode),
+            });
+        }
+
+        result.tool_calls = if normalized_tool_calls.is_empty() {
+            None
+        } else {
+            Some(normalized_tool_calls)
+        };
+
+        Ok(())
     }
 
     fn normalize_actions_to_tool_calls(
@@ -342,6 +384,14 @@ impl Orchestrator {
         role: &AgentRole,
         result: &mut MixedResult,
     ) -> Result<(), AIError> {
+        if result
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| !calls.is_empty())
+        {
+            return Ok(());
+        }
+
         let actions = result.actions.take().unwrap_or_default();
         if actions.is_empty() {
             return Ok(());
@@ -357,13 +407,30 @@ impl Orchestrator {
             } = action;
             match action.as_str() {
                 "READ_CONTEXT" => {
-                    let tool = self.resolve_read_context_tool(role)?;
-                    Self::validate_args_against_schema(&args, &tool.parameters, &tool.name)?;
+                    let capability = Self::read_context_capability(role)?;
+                    let plan = self.skill_registry.resolve_execution_plan(
+                        role,
+                        &self.platform,
+                        &capability,
+                        args,
+                        None,
+                    )?;
+                    let tool = self
+                        .skill_registry
+                        .find_for_role_and_platform(role, &self.platform, &plan.tool_name)
+                        .ok_or_else(|| {
+                            AIError::ConfigError(format!(
+                                "无法根据 execution plan 回查工具 {}",
+                                plan.tool_name
+                            ))
+                        })?;
+                    Self::validate_args_against_schema(&plan.args, &tool.parameters, &tool.name)?;
                     normalized_tool_calls.push(AIToolCall {
                         agent: Some(role.clone()),
-                        tool: tool.name,
-                        args,
+                        tool: plan.tool_name,
+                        args: plan.args,
                         reason,
+                        execution_mode: None,
                     });
                 }
                 other => {
@@ -753,6 +820,7 @@ impl Orchestrator {
         let json_str = Self::extract_json(&content)?;
         let mut worker_result: MixedResult =
             serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
+        self.normalize_requested_capabilities_to_tool_calls(&role, &mut worker_result)?;
         self.normalize_actions_to_tool_calls(&role, &mut worker_result)?;
         Self::apply_observation_fallback(&role, &result_json, &mut worker_result);
         Self::normalize_query_result(&role, &original_text, &mut worker_result);
@@ -763,7 +831,7 @@ impl Orchestrator {
     }
 
     /// 第一阶段：Supervisor 路由
-    async fn route(&self, text: &str) -> Result<MixedResult, AIError> {
+    async fn route(&self, text: &str) -> Result<PlannerResult, AIError> {
         self.emit_thinking(
             AgentRole::Supervisor.as_label(),
             "routing",
@@ -800,13 +868,13 @@ impl Orchestrator {
         println!("DEBUG: Agent Response: {}", content);
 
         let json_str = Self::extract_json(&content)?;
-        let route_result: MixedResult =
+        let route_result: PlannerResult =
             serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?;
         Ok(route_result)
     }
 
     /// 第二阶段：调用专家 Agent
-    async fn call_worker(&self, role: AgentRole, text: &str) -> Result<MixedResult, AIError> {
+    async fn call_worker(&self, role: AgentRole, text: &str) -> Result<PlannerResult, AIError> {
         self.emit_thinking(
             role.as_label(),
             "working",
@@ -854,20 +922,34 @@ impl Orchestrator {
 
         println!("DEBUG: Agent Response: {}", content);
 
-        let mut worker_result: MixedResult = match Self::extract_json(&content) {
+        let worker_result: PlannerResult = match Self::extract_json(&content) {
             Ok(json_str) => serde_json::from_str(&json_str).map_err(|_| AIError::ParsingFailed)?,
             Err(_) if role == AgentRole::ChatAgent => Self::fallback_chat_result(text, &content),
             Err(err) => return Err(err),
         };
-        self.normalize_actions_to_tool_calls(&role, &mut worker_result)?;
-        Self::normalize_query_result(&role, text, &mut worker_result);
-        if let Some(tool_calls) = &mut worker_result.tool_calls {
+        let mut normalized_result: MixedResult = worker_result.into();
+        self.normalize_requested_capabilities_to_tool_calls(&role, &mut normalized_result)?;
+        self.normalize_actions_to_tool_calls(&role, &mut normalized_result)?;
+        Self::normalize_query_result(&role, text, &mut normalized_result);
+        if let Some(tool_calls) = &mut normalized_result.tool_calls {
             self.validate_tool_calls(&role, tool_calls)?;
             for tool_call in tool_calls.iter_mut() {
                 tool_call.agent = Some(role.clone());
             }
         }
-        Ok(worker_result)
+        Ok(PlannerResult {
+            primary_intent: normalized_result.primary_intent,
+            routed_agents: normalized_result.routed_agents,
+            tasks: normalized_result.tasks,
+            habits: normalized_result.habits,
+            chat_response: normalized_result.chat_response,
+            new_memories: normalized_result.new_memories,
+            session_summary: normalized_result.session_summary,
+            user_profile: normalized_result.user_profile,
+            requested_capabilities: normalized_result.requested_capabilities,
+            actions: normalized_result.actions,
+            tool_calls: normalized_result.tool_calls,
+        })
     }
 }
 
@@ -910,6 +992,7 @@ impl Orchestrator {
 
         for res in worker_results {
             let worker_res = res?;
+            let worker_res: MixedResult = worker_res.into();
             if let Some(tasks) = worker_res.tasks {
                 let mut current_tasks = final_result.tasks.unwrap_or_default();
                 current_tasks.extend(tasks);
@@ -1091,7 +1174,8 @@ mod tests {
     use serde_json::json;
 
     use crate::domain::models::{
-        ChatChoice, ChatResponse, MemoryFragment, MemorySnapshot, MemorySyncPayload, ToolMetadata,
+        ChatChoice, ChatResponse, MemoryFragment, MemorySnapshot, MemorySyncPayload,
+        ToolCapability, ToolMetadata,
     };
 
     struct MockLlmGateway {
@@ -1173,6 +1257,7 @@ mod tests {
             name: "read_tasks".to_string(),
             description: "读取任务".to_string(),
             domain: AgentRole::TaskAgent,
+            capabilities: vec![ToolCapability::ReadTaskContext],
             supported_platforms: vec!["ios".to_string(), "android".to_string()],
             requires_ui_confirmation: false,
             parameters: json!({
@@ -1286,7 +1371,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_context_action_is_normalized_into_registered_read_tool() {
+    async fn legacy_action_is_still_normalized_into_registered_read_tool() {
         let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
             json!({
                 "primaryIntent": "ExtractTasks",
@@ -1343,6 +1428,251 @@ mod tests {
         assert_eq!(tool_call.args["timeRangeDays"], json!(7));
         assert_eq!(tool_call.args["keywords"], json!(["本周"]));
         assert_eq!(tool_call.agent, Some(AgentRole::TaskAgent));
+    }
+
+    #[tokio::test]
+    async fn requested_capability_is_normalized_into_registered_read_tool() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "requestedCapabilities": [
+                    {
+                        "capability": "READ_TASK_CONTEXT",
+                        "args": {
+                            "timeRangeDays": 7,
+                            "keywords": ["本周"]
+                        },
+                        "reason": "回答前先请求任务上下文"
+                    }
+                ],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "准备读取任务上下文",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let result = orchestrator
+            .process_message("那我这周有什么任务呀？".to_string())
+            .await
+            .unwrap();
+
+        let tool_call = result
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .cloned()
+            .expect("expected normalized tool call");
+
+        assert_eq!(tool_call.tool, "read_tasks");
+        assert_eq!(tool_call.args["timeRangeDays"], json!(7));
+        assert_eq!(tool_call.args["keywords"], json!(["本周"]));
+        assert_eq!(tool_call.agent, Some(AgentRole::TaskAgent));
+    }
+
+    #[tokio::test]
+    async fn requested_capability_defaults_to_auto_for_single_non_confirm_tool() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "requestedCapabilities": [
+                    {
+                        "capability": "READ_TASK_CONTEXT",
+                        "args": {
+                            "timeRangeDays": 5
+                        },
+                        "reason": "读取任务上下文"
+                    }
+                ],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "准备读取任务上下文",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let result = orchestrator
+            .process_message("看看我的任务".to_string())
+            .await
+            .unwrap();
+
+        let tool_call = result
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .cloned()
+            .expect("expected tool call");
+
+        assert_eq!(tool_call.tool, "read_tasks");
+        assert_eq!(tool_call.args["timeRangeDays"], json!(5));
+    }
+
+    #[tokio::test]
+    async fn requested_capability_with_never_does_not_emit_tool_call() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "chatResponse": "我暂时不读取本地任务，先根据已有信息回答。",
+                "requestedCapabilities": [
+                    {
+                        "capability": "READ_TASK_CONTEXT",
+                        "executionMode": "NEVER",
+                        "args": {
+                            "timeRangeDays": 7
+                        },
+                        "reason": "本轮禁止读取工具"
+                    }
+                ],
+                "tasks": [],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "未读取任务上下文",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let result = orchestrator
+            .process_message("看看我的任务".to_string())
+            .await
+            .unwrap();
+
+        assert!(
+            result
+                .tool_calls
+                .as_ref()
+                .map(|calls| calls.is_empty())
+                .unwrap_or(true)
+        );
+        assert_eq!(
+            result.chat_response.as_deref(),
+            Some("我暂时不读取本地任务，先根据已有信息回答。")
+        );
+    }
+
+    #[tokio::test]
+    async fn requested_capabilities_take_precedence_over_legacy_actions() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "requestedCapabilities": [
+                    {
+                        "capability": "READ_TASK_CONTEXT",
+                        "args": {
+                            "timeRangeDays": 14
+                        },
+                        "reason": "优先使用新协议"
+                    }
+                ],
+                "actions": [
+                    {
+                        "action": "READ_CONTEXT",
+                        "args": {
+                            "timeRangeDays": 3
+                        },
+                        "reason": "旧协议不应覆盖新协议"
+                    }
+                ],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "newMemories": [],
+                "userProfile": null,
+                "sessionSummary": "准备读取任务上下文",
+                "tasks": [],
+                "habits": [],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let result = orchestrator
+            .process_message("看看我的任务".to_string())
+            .await
+            .unwrap();
+
+        let tool_call = result
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .cloned()
+            .expect("expected normalized tool call");
+
+        assert_eq!(tool_call.tool, "read_tasks");
+        assert_eq!(tool_call.args["timeRangeDays"], json!(14));
     }
 
     #[tokio::test]
@@ -1571,13 +1901,13 @@ mod tests {
             })
             .to_string(),
             json!({
-                "actions": [
+                "requestedCapabilities": [
                     {
-                        "action": "READ_CONTEXT",
+                        "capability": "READ_TASK_CONTEXT",
                         "args": {
                             "timeRangeDays": 7
                         },
-                        "reason": "需要先查看近期任务"
+                        "reason": "需要先请求近期任务上下文"
                     }
                 ]
             })
@@ -1595,7 +1925,7 @@ mod tests {
                         "note": "需要提前准备会议议程和材料"
                     }
                 ],
-                "actions": [],
+                "requestedCapabilities": [],
                 "toolCalls": []
             })
             .to_string(),
@@ -1701,13 +2031,13 @@ mod tests {
             })
             .to_string(),
             json!({
-                "actions": [
+                "requestedCapabilities": [
                     {
-                        "action": "READ_CONTEXT",
+                        "capability": "READ_TASK_CONTEXT",
                         "args": {
                             "timeRangeDays": 7
                         },
-                        "reason": "Need to inspect recent tasks first."
+                        "reason": "Need to request recent task context first."
                     }
                 ]
             })
@@ -1715,7 +2045,7 @@ mod tests {
             json!({
                 "tasks": [],
                 "chatResponse": "I found 3 tasks for you.",
-                "actions": [],
+                "requestedCapabilities": [],
                 "toolCalls": []
             })
             .to_string(),

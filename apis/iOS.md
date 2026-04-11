@@ -92,6 +92,7 @@ let storagePath = FileManager.default
 
 当前实际事件为：
 
+- `OnLifecycle { requestId, stage, status, message }`
 - `OnThinking { agentName, phase, message }`
 - `OnTextStream { chunk }`
 - `OnToolRequest { id, toolName, argsJson }`
@@ -106,6 +107,8 @@ let storagePath = FileManager.default
 3. 真正的记忆增量 JSON 需要通过 `getLastMemorySyncJson()` 拉取。
 
 也就是说，iOS 侧不要再假设“`OnFinish` 一到就一定携带记忆增量”。
+
+推荐统一按 `OnLifecycle` 驱动宿主状态机，阶段定义见 [Lifecycle.md](/Users/aritxonly/Codes/Agent/deadliner_core/apis/Lifecycle.md)。
 
 ## 7. 记忆同步协议
 

@@ -118,21 +118,40 @@ impl DeadlinerCore {
         let orchestrator = self.orchestrator.clone();
         let runtime = self.runtime.clone();
         let this = self.clone_for_spawn();
+        let request_id = uuid::Uuid::new_v4().to_string();
 
         runtime.spawn(async move {
+            this.emit_lifecycle(
+                request_id.clone(),
+                "process_input",
+                "started",
+                Some("收到用户输入".to_string()),
+            )
+            .await;
             match orchestrator.process_message_core(text.clone()).await {
                 Ok(result) => {
                     let should_commit_memory =
                         !matches!(result.tool_calls.as_ref(), Some(tool_calls) if !tool_calls.is_empty());
                     let result_for_memory = result.clone();
 
-                    this.handle_mixed_result(text.clone(), result).await;
+                    this.handle_mixed_result(request_id.clone(), text.clone(), result)
+                        .await;
 
                     if should_commit_memory {
-                        this.commit_memory_after_finish(text, result_for_memory).await;
+                        this.commit_memory_after_finish(request_id.clone(), text, result_for_memory)
+                            .await;
                     }
                 }
-                Err(e) => this.send_event(CoreEvent::OnError { message: e.to_string() }).await,
+                Err(e) => {
+                    this.emit_lifecycle(
+                        request_id.clone(),
+                        "process_input",
+                        "failed",
+                        Some(e.to_string()),
+                    )
+                    .await;
+                    this.send_event(CoreEvent::OnError { message: e.to_string() }).await;
+                }
             }
         });
     }
@@ -141,21 +160,44 @@ impl DeadlinerCore {
         let orchestrator = self.orchestrator.clone();
         let runtime = self.runtime.clone();
         let this = self.clone_for_spawn();
+        let request_id = uuid::Uuid::new_v4().to_string();
 
         runtime.spawn(async move {
+            this.emit_lifecycle(
+                request_id.clone(),
+                "submit_tool_result",
+                "started",
+                Some("收到工具回灌结果".to_string()),
+            )
+            .await;
             match orchestrator.submit_tool_result_core(id, result_json).await {
                 Ok((original_text, result)) => {
                     let should_commit_memory =
                         !matches!(result.tool_calls.as_ref(), Some(tool_calls) if !tool_calls.is_empty());
                     let result_for_memory = result.clone();
 
-                    this.handle_mixed_result(original_text.clone(), result).await;
+                    this.handle_mixed_result(request_id.clone(), original_text.clone(), result)
+                        .await;
 
                     if should_commit_memory {
-                        this.commit_memory_after_finish(original_text, result_for_memory).await;
+                        this.commit_memory_after_finish(
+                            request_id.clone(),
+                            original_text,
+                            result_for_memory,
+                        )
+                        .await;
                     }
                 }
-                Err(e) => this.send_event(CoreEvent::OnError { message: e.to_string() }).await,
+                Err(e) => {
+                    this.emit_lifecycle(
+                        request_id.clone(),
+                        "submit_tool_result",
+                        "failed",
+                        Some(e.to_string()),
+                    )
+                    .await;
+                    this.send_event(CoreEvent::OnError { message: e.to_string() }).await;
+                }
             }
         });
     }
@@ -229,10 +271,16 @@ impl DeadlinerCore {
         })
     }
 
-    async fn handle_mixed_result(&self, original_text: String, result: MixedResult) {
+    async fn handle_mixed_result(
+        &self,
+        request_id: String,
+        original_text: String,
+        result: MixedResult,
+    ) {
         if let Some(tool_calls) = result.tool_calls {
             if let Some(tool) = tool_calls.first() {
                 let tool_call_id = uuid::Uuid::new_v4().to_string();
+                let retry_count = Self::extract_retry_count(&tool.args);
                 if let Some(agent) = tool.agent.clone() {
                     self.send_event(CoreEvent::OnThinking {
                         agent_name: agent.as_label().to_string(),
@@ -241,9 +289,22 @@ impl DeadlinerCore {
                     })
                     .await;
                     self.orchestrator
-                        .register_pending_tool_call(tool_call_id.clone(), agent, original_text)
+                        .register_pending_tool_call(
+                            tool_call_id.clone(),
+                            agent,
+                            original_text,
+                            tool.tool.clone(),
+                            retry_count,
+                        )
                         .await;
                 }
+                self.emit_lifecycle(
+                    request_id,
+                    "tool_request",
+                    "waiting",
+                    Some(format!("等待工具 {} 执行", tool.tool)),
+                )
+                .await;
                 self.send_event(CoreEvent::OnToolRequest {
                     id: tool_call_id,
                     tool_name: tool.tool.clone(),
@@ -334,9 +395,21 @@ impl DeadlinerCore {
             memory_sync_json: None,
         })
         .await;
+        self.emit_lifecycle(
+            request_id,
+            "orchestration",
+            "completed",
+            Some("主流程完成并回传结果".to_string()),
+        )
+        .await;
     }
 
-    async fn commit_memory_after_finish(&self, original_text: String, result: MixedResult) {
+    async fn commit_memory_after_finish(
+        &self,
+        request_id: String,
+        original_text: String,
+        result: MixedResult,
+    ) {
         match self
             .orchestrator
             .synthesize_and_commit_memory(original_text, result)
@@ -355,9 +428,18 @@ impl DeadlinerCore {
                         new_revision: commit.new_revision,
                     })
                     .await;
+                    self.emit_lifecycle(
+                        request_id,
+                        "memory_commit",
+                        "completed",
+                        Some("记忆增量已提交".to_string()),
+                    )
+                    .await;
                 }
             }
             Err(e) => {
+                self.emit_lifecycle(request_id, "memory_commit", "failed", Some(e.to_string()))
+                    .await;
                 self.send_event(CoreEvent::OnError {
                     message: e.to_string(),
                 })
@@ -371,6 +453,22 @@ impl DeadlinerCore {
         if let Some(callback) = cb.as_ref() {
             callback.on_event(event);
         }
+    }
+
+    async fn emit_lifecycle(
+        &self,
+        request_id: String,
+        stage: &str,
+        status: &str,
+        message: Option<String>,
+    ) {
+        self.send_event(CoreEvent::OnLifecycle {
+            request_id,
+            stage: stage.to_string(),
+            status: status.to_string(),
+            message,
+        })
+        .await;
     }
 
     fn clone_for_spawn(&self) -> Self {
@@ -396,16 +494,24 @@ impl DeadlinerCore {
                     CapabilityExecutionMode::AskUser => "ASK_USER",
                     CapabilityExecutionMode::Never => "NEVER",
                 };
-                object.insert(
-                    "_meta".to_string(),
-                    serde_json::json!({
-                        "executionMode": mode_str
-                    }),
-                );
+                let meta_entry = object
+                    .entry("_meta".to_string())
+                    .or_insert_with(|| serde_json::json!({}));
+                if let Some(meta_object) = meta_entry.as_object_mut() {
+                    meta_object.insert("executionMode".to_string(), serde_json::json!(mode_str));
+                }
             }
         }
 
         payload.to_string()
+    }
+
+    fn extract_retry_count(args: &serde_json::Value) -> u8 {
+        args.get("_meta")
+            .and_then(|meta| meta.get("retryCount"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+            .min(u64::from(u8::MAX)) as u8
     }
 }
 

@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub enum CoreEvent {
+    OnLifecycle {
+        request_id: String,
+        stage: String,
+        status: String,
+        message: Option<String>,
+    },
     OnThinking {
         agent_name: String,
         phase: String,

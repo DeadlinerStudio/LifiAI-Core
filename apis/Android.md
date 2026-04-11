@@ -90,6 +90,7 @@ val core = DeadlinerCore(
 
 当前实际事件与 iOS 保持一致：
 
+- `OnLifecycle`
 - `OnThinking`
 - `OnTextStream`
 - `OnToolRequest`
@@ -102,6 +103,7 @@ val core = DeadlinerCore(
 1. `OnFinish.memorySyncJson` 当前实现里是空值。
 2. 记忆提交结果通过 `OnMemoryCommitted` 单独通知。
 3. 记忆增量 JSON 需要通过 `getLastMemorySyncJson()` 主动读取。
+4. 推荐统一按 `OnLifecycle` 驱动宿主状态机，详见 [Lifecycle.md](/Users/aritxonly/Codes/Agent/deadliner_core/apis/Lifecycle.md)。
 
 ## 7. 记忆同步协议
 
@@ -205,3 +207,12 @@ scope.launch {
 2. 再用 `getLatestTasks()` / `getLatestHabits()` 校验结果
 3. 接入 `OnFinish` 更新 UI
 4. 最后补 `replaceMemorySnapshot()`、`OnMemoryCommitted`、`getLastMemorySyncJson()`
+
+## 11. Core 日志与 LogCat
+
+`core_logic` 已内置 Android LogCat 输出能力。在 Android 平台编译时，Core 内部调试日志会通过 `liblog` 写入 LogCat。
+
+建议在 Android Studio 里使用以下过滤条件：
+
+- `tag:DeadlinerCore`
+- 或命令行：`adb logcat -s DeadlinerCore`

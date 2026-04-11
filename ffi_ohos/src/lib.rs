@@ -28,6 +28,18 @@ fn habit_to_json(habit: &FFIHabit) -> Value {
 
 fn event_to_json(event: CoreEvent) -> String {
     let payload = match event {
+        CoreEvent::OnLifecycle {
+            request_id,
+            stage,
+            status,
+            message,
+        } => json!({
+            "type": "lifecycle",
+            "requestId": request_id,
+            "stage": stage,
+            "status": status,
+            "message": message,
+        }),
         CoreEvent::OnThinking {
             agent_name,
             phase,

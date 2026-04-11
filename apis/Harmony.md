@@ -97,6 +97,7 @@ cd vendor/deadliner_core
 
 鸿蒙侧真正需要桥接出去的事件如下：
 
+- `OnLifecycle { request_id, stage, status, message }`
 - `OnThinking { agent_name, phase, message }`
 - `OnTextStream { chunk }`
 - `OnToolRequest { id, tool_name, args_json }`
@@ -111,6 +112,8 @@ cd vendor/deadliner_core
 3. 最近一次记忆增量需要通过 `get_last_memory_sync_json()` 获取。
 
 所以鸿蒙侧桥接时，推荐把“结果完成”和“记忆提交”分成两个事件来处理。
+
+推荐统一按 `OnLifecycle` 驱动宿主状态机，阶段定义见 [Lifecycle.md](/Users/aritxonly/Codes/Agent/deadliner_core/apis/Lifecycle.md)。
 
 ## 7. 记忆同步协议
 

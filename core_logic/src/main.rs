@@ -223,6 +223,8 @@ async fn run_mock_demo(platform: String) -> Result<(), Box<dyn std::error::Error
                 tool_call_id.clone(),
                 tool_call.agent.unwrap_or(AgentRole::TaskAgent),
                 user_input.to_string(),
+                tool_call.tool.clone(),
+                0,
             )
             .await;
 

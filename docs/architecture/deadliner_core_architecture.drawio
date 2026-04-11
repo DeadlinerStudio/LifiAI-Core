@@ -1,0 +1,132 @@
+<mxfile host="app.diagrams.net" modified="2026-04-11T00:00:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="deadliner-arch" name="Deadliner Core Architecture">
+    <mxGraphModel dx="1800" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1400" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Deadliner Core 当前架构（2026-04）" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=22;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="620" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="layer_platform" value="平台层" style="swimlane;html=1;rounded=1;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="30" y="80" width="410" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="ios" value="iOS App&#xa;- Swift / Kotlin Multiplatform caller" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf" vertex="1" parent="layer_platform">
+          <mxGeometry x="20" y="50" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="android" value="Android App&#xa;- Kotlin caller&#xa;- LogCat(tag: DeadlinerCore)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf" vertex="1" parent="layer_platform">
+          <mxGeometry x="210" y="50" width="180" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="ohos" value="Harmony App&#xa;- ArkTS/JS caller" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf" vertex="1" parent="layer_platform">
+          <mxGeometry x="20" y="160" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="tool_exec" value="本地工具执行器&#xa;(Task/Habit DB 查询、改期等)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf" vertex="1" parent="layer_platform">
+          <mxGeometry x="210" y="170" width="180" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="layer_ffi" value="FFI 适配层" style="swimlane;html=1;rounded=1;startSize=30;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="470" y="80" width="450" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="ffi_uniffi" value="ffi_uniffi&#xa;- UniFFI Object: DeadlinerCore&#xa;- CoreEvent/Record 映射" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656" vertex="1" parent="layer_ffi">
+          <mxGeometry x="20" y="50" width="200" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ffi_ohos" value="ffi_ohos&#xa;- napi_ohos 导出&#xa;- 事件队列 JSON 化" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656" vertex="1" parent="layer_ffi">
+          <mxGeometry x="240" y="50" width="190" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ffi_handlers" value="core_logic::interfaces::ffi_handlers&#xa;- DeadlinerCore 门面&#xa;- Tokio Runtime 持有&#xa;- 回调与 LatestState 管理" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656" vertex="1" parent="layer_ffi">
+          <mxGeometry x="20" y="170" width="410" height="100" as="geometry" />
+        </mxCell>
+
+        <mxCell id="layer_core" value="Core 业务层（core_logic）" style="swimlane;html=1;rounded=1;startSize=30;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="950" y="80" width="690" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="orchestrator" value="application::orchestrator&#xa;- Supervisor 路由&#xa;- Worker 并行调用&#xa;- 结果归并 / tool call 规范化&#xa;- memory synthesis" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366" vertex="1" parent="layer_core">
+          <mxGeometry x="20" y="50" width="300" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="prompt_builder" value="application::prompt_builder&#xa;- 各角色提示词构建" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366" vertex="1" parent="layer_core">
+          <mxGeometry x="340" y="50" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="domain_models" value="domain::models&#xa;- MixedResult / ToolCall / MemorySync 等" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366" vertex="1" parent="layer_core">
+          <mxGeometry x="340" y="140" width="170" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="domain_traits" value="domain::traits&#xa;- LlmGateway&#xa;- MemoryStore&#xa;- AgentOrchestrator / ToolExecutor" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366" vertex="1" parent="layer_core">
+          <mxGeometry x="530" y="50" width="140" height="170" as="geometry" />
+        </mxCell>
+
+        <mxCell id="infra_llm" value="infrastructure::llm_client&#xa;DeepSeekClient" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366" vertex="1" parent="layer_core">
+          <mxGeometry x="20" y="250" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="infra_memory" value="infrastructure::memory_store&#xa;LocalMemoryStore" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366" vertex="1" parent="layer_core">
+          <mxGeometry x="240" y="250" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="infra_skill" value="infrastructure::skill_registry&#xa;SkillRegistry" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366" vertex="1" parent="layer_core">
+          <mxGeometry x="460" y="250" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="infra_logger" value="infrastructure::logger&#xa;Android: liblog(LogCat)&#xa;Others: stdout" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366" vertex="1" parent="layer_core">
+          <mxGeometry x="20" y="340" width="200" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="layer_external" value="外部依赖与数据" style="swimlane;html=1;rounded=1;startSize=30;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1670" y="80" width="430" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="deepseek" value="DeepSeek API&#xa;/chat/completions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450" vertex="1" parent="layer_external">
+          <mxGeometry x="20" y="50" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="storage" value="本地存储目录&#xa;(memory snapshot / deltas)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450" vertex="1" parent="layer_external">
+          <mxGeometry x="220" y="50" width="190" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="skills" value="skills/*.json&#xa;(capability → tool mapping)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450" vertex="1" parent="layer_external">
+          <mxGeometry x="20" y="140" width="180" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_title" value="关键运行流（简化）" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=18;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="30" y="630" width="280" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow1" value="1) 平台调用 processInput()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6" vertex="1" parent="1">
+          <mxGeometry x="30" y="680" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="flow2" value="2) Orchestrator 路由 + 并行 Worker" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6" vertex="1" parent="1">
+          <mxGeometry x="320" y="680" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="flow3" value="3) 若需工具：OnToolRequest 回调平台" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6" vertex="1" parent="1">
+          <mxGeometry x="630" y="680" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="flow4" value="4) 平台执行本地工具后 submitToolResult()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6" vertex="1" parent="1">
+          <mxGeometry x="960" y="680" width="320" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="flow5" value="5) 结果归并 + 记忆同步&#xa;OnFinish / OnMemoryCommitted" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6" vertex="1" parent="1">
+          <mxGeometry x="1330" y="680" width="300" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="ios" target="ffi_uniffi"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="android" target="ffi_uniffi"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="ohos" target="ffi_ohos"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="ffi_uniffi" target="ffi_handlers"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="ffi_ohos" target="ffi_handlers"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e6" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="ffi_handlers" target="orchestrator"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e7" value="uses" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="orchestrator" target="prompt_builder"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e8" value="uses" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="orchestrator" target="domain_models"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e9" value="trait impl" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="orchestrator" target="domain_traits"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e10" value="LlmGateway" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="orchestrator" target="infra_llm"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e11" value="MemoryStore" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="orchestrator" target="infra_memory"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e12" value="tool plan" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="orchestrator" target="infra_skill"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e13" value="debug logs" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="orchestrator" target="infra_logger"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e14" value="HTTP" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="infra_llm" target="deepseek"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e15" value="read/write" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="infra_memory" target="storage"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e16" value="load" style="endArrow=classic;html=1;rounded=0;strokeWidth=2" edge="1" parent="1" source="infra_skill" target="skills"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e17" value="OnToolRequest" style="endArrow=classic;html=1;rounded=0;dashed=1;strokeWidth=2" edge="1" parent="1" source="ffi_handlers" target="tool_exec"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e18" value="submitToolResult" style="endArrow=classic;html=1;rounded=0;dashed=1;strokeWidth=2" edge="1" parent="1" source="tool_exec" target="ffi_handlers"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="f1" value="" style="endArrow=classic;html=1;strokeWidth=2" edge="1" parent="1" source="flow1" target="flow2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f2" value="" style="endArrow=classic;html=1;strokeWidth=2" edge="1" parent="1" source="flow2" target="flow3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f3" value="" style="endArrow=classic;html=1;strokeWidth=2" edge="1" parent="1" source="flow3" target="flow4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f4" value="" style="endArrow=classic;html=1;strokeWidth=2" edge="1" parent="1" source="flow4" target="flow5"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

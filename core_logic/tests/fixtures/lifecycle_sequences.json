@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "description": "Canonical lifecycle snapshots used by CI contract checks.",
+  "cases": [
+    {
+      "name": "process_input_complete_with_memory_commit",
+      "events": [
+        { "requestId": "req-process-1", "stage": "process_input", "status": "started" },
+        { "requestId": "req-process-1", "stage": "orchestration", "status": "completed" },
+        { "requestId": "req-process-1", "stage": "memory_commit", "status": "completed" }
+      ]
+    },
+    {
+      "name": "process_input_waiting_for_tool",
+      "events": [
+        { "requestId": "req-process-2", "stage": "process_input", "status": "started" },
+        { "requestId": "req-process-2", "stage": "tool_request", "status": "waiting" }
+      ]
+    },
+    {
+      "name": "submit_tool_result_failed",
+      "events": [
+        { "requestId": "req-submit-1", "stage": "submit_tool_result", "status": "started" },
+        { "requestId": "req-submit-1", "stage": "submit_tool_result", "status": "failed" }
+      ]
+    }
+  ]
+}

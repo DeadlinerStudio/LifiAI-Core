@@ -23,6 +23,12 @@ pub struct FFIHabit {
 
 #[derive(Debug, Clone, uniffi::Enum)]
 pub enum CoreEvent {
+    OnLifecycle {
+        request_id: String,
+        stage: String,
+        status: String,
+        message: Option<String>,
+    },
     OnThinking {
         agent_name: String,
         phase: String,
@@ -191,6 +197,17 @@ impl From<inner_events::FFIHabit> for FFIHabit {
 impl From<inner_events::CoreEvent> for CoreEvent {
     fn from(value: inner_events::CoreEvent) -> Self {
         match value {
+            inner_events::CoreEvent::OnLifecycle {
+                request_id,
+                stage,
+                status,
+                message,
+            } => Self::OnLifecycle {
+                request_id,
+                stage,
+                status,
+                message,
+            },
             inner_events::CoreEvent::OnThinking {
                 agent_name,
                 phase,

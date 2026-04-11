@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "description": "Invalid lifecycle snapshots that must be rejected by the contract.",
+  "cases": [
+    {
+      "name": "invalid_first_event",
+      "events": [
+        { "requestId": "bad-1", "stage": "orchestration", "status": "completed" }
+      ]
+    },
+    {
+      "name": "memory_before_orchestration",
+      "events": [
+        { "requestId": "bad-2", "stage": "process_input", "status": "started" },
+        { "requestId": "bad-2", "stage": "memory_commit", "status": "completed" }
+      ]
+    },
+    {
+      "name": "event_after_failed_terminal",
+      "events": [
+        { "requestId": "bad-3", "stage": "submit_tool_result", "status": "started" },
+        { "requestId": "bad-3", "stage": "submit_tool_result", "status": "failed" },
+        { "requestId": "bad-3", "stage": "orchestration", "status": "completed" }
+      ]
+    }
+  ]
+}

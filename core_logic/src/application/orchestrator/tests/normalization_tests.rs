@@ -241,7 +241,7 @@
     }
 
     #[tokio::test]
-    async fn requested_capability_with_never_does_not_emit_tool_call() {
+    async fn requested_capability_with_never_is_rejected_hard() {
         let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
             json!({
                 "primaryIntent": "ExtractTasks",
@@ -284,22 +284,55 @@
             "zh-CN".to_string(),
         );
 
-        let result = orchestrator
+        let err = orchestrator
             .process_message("看看我的任务".to_string())
             .await
-            .unwrap();
+            .expect_err("NEVER mode violates mandatory tool-call contract");
+        match err {
+            AIError::InvalidToolCall(message) => assert!(message.contains("必须选择至少一个 toolCall")),
+            other => panic!("unexpected error: {}", other),
+        }
+    }
 
-        assert!(
-            result
-                .tool_calls
-                .as_ref()
-                .map(|calls| calls.is_empty())
-                .unwrap_or(true)
+    #[tokio::test]
+    async fn task_agent_must_emit_tool_call_and_cannot_return_task_proposal_mode() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "tasks": [
+                    {
+                        "name": "写周报",
+                        "dueTime": "2026-04-13 10:00",
+                        "note": "直接提议，不走工具"
+                    }
+                ],
+                "toolCalls": []
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
         );
-        assert_eq!(
-            result.chat_response.as_deref(),
-            Some("我暂时不读取本地任务，先根据已有信息回答。")
-        );
+
+        let err = orchestrator
+            .process_message("帮我加个任务：明早十点写周报".to_string())
+            .await
+            .expect_err("task proposal mode without tool call must fail");
+
+        match err {
+            AIError::InvalidToolCall(message) => assert!(message.contains("必须选择至少一个 toolCall")),
+            other => panic!("unexpected error: {}", other),
+        }
     }
 
     #[tokio::test]
@@ -441,7 +474,7 @@
     }
 
     #[tokio::test]
-    async fn invalid_tool_call_args_are_downgraded_to_safe_chat() {
+    async fn invalid_tool_call_args_are_rejected_hard() {
         let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
             json!({
                 "primaryIntent": "ExtractTasks",
@@ -480,30 +513,19 @@
             "zh-CN".to_string(),
         );
 
-        let result = orchestrator
+        let err = orchestrator
             .process_message("帮我看看下周任务".to_string())
             .await
-            .expect("invalid tool call should be downgraded");
+            .expect_err("invalid tool call should fail hard");
 
-        assert!(
-            result
-                .tool_calls
-                .as_ref()
-                .map(|calls| calls.is_empty())
-                .unwrap_or(true)
-        );
-        assert_eq!(result.primary_intent.as_deref(), Some("Chat"));
-        assert!(
-            result
-                .chat_response
-                .as_deref()
-                .unwrap_or("")
-                .contains("不执行本地任务工具")
-        );
+        match err {
+            AIError::InvalidToolCall(message) => assert!(message.contains("timeRangeDays")),
+            other => panic!("unexpected error: {}", other),
+        }
     }
 
     #[tokio::test]
-    async fn unknown_action_is_downgraded_to_safe_chat() {
+    async fn unknown_action_is_rejected_hard() {
         let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
             json!({
                 "primaryIntent": "ExtractTasks",
@@ -541,24 +563,13 @@
             "zh-CN".to_string(),
         );
 
-        let result = orchestrator
+        let err = orchestrator
             .process_message("帮我看看这周任务".to_string())
             .await
-            .expect("invalid action should be downgraded");
+            .expect_err("invalid action should fail hard");
 
-        assert!(
-            result
-                .tool_calls
-                .as_ref()
-                .map(|calls| calls.is_empty())
-                .unwrap_or(true)
-        );
-        assert_eq!(result.primary_intent.as_deref(), Some("Chat"));
-        assert!(
-            result
-                .chat_response
-                .as_deref()
-                .unwrap_or("")
-                .contains("不执行本地任务工具")
-        );
+        match err {
+            AIError::InvalidToolCall(message) => assert!(message.contains("READ_TASK_LIST")),
+            other => panic!("unexpected error: {}", other),
+        }
     }

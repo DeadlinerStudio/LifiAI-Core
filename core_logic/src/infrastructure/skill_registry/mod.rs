@@ -53,6 +53,28 @@ impl SkillRegistry {
                     }),
                 },
                 ToolMetadata {
+                    name: "create_task".to_string(),
+                    description: "创建单次任务。仅当用户明确表达新增/添加任务时使用，不用于查询。"
+                        .to_string(),
+                    domain: AgentRole::TaskAgent,
+                    capabilities: vec![ToolCapability::CreateTask],
+                    supported_platforms: vec![
+                        "ios".to_string(),
+                        "android".to_string(),
+                        "harmony".to_string(),
+                    ],
+                    requires_ui_confirmation: true,
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "dueTime": { "type": "string" },
+                            "note": { "type": "string" }
+                        },
+                        "required": ["name"]
+                    }),
+                },
+                ToolMetadata {
                     name: "update_deadline".to_string(),
                     description: "修改已有任务的截止时间，适用于用户明确表达延期、改期或重新安排。"
                         .to_string(),
@@ -75,6 +97,31 @@ impl SkillRegistry {
                             }
                         },
                         "required": ["taskId", "newDueTime"]
+                    }),
+                },
+                ToolMetadata {
+                    name: "create_habit".to_string(),
+                    description:
+                        "创建周期性习惯。仅当用户明确表达新增/创建习惯时使用，不用于查询。"
+                            .to_string(),
+                    domain: AgentRole::HabitAgent,
+                    capabilities: vec![ToolCapability::CreateHabit],
+                    supported_platforms: vec![
+                        "ios".to_string(),
+                        "android".to_string(),
+                        "harmony".to_string(),
+                    ],
+                    requires_ui_confirmation: true,
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "period": { "type": "string" },
+                            "timesPerPeriod": { "type": "integer" },
+                            "goalType": { "type": "string" },
+                            "totalTarget": { "type": "integer" }
+                        },
+                        "required": ["name", "period", "timesPerPeriod", "goalType"]
                     }),
                 },
                 ToolMetadata {

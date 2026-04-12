@@ -1,0 +1,29 @@
+{
+  "name": "create_habit",
+  "description": "创建周期性习惯。仅当用户明确表达新增/创建习惯时使用，不用于查询。",
+  "domain": "HabitAgent",
+  "capabilities": ["CREATE_HABIT"],
+  "supportedPlatforms": ["ios", "android", "harmony"],
+  "requiresUiConfirmation": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "period": {
+        "type": "string"
+      },
+      "timesPerPeriod": {
+        "type": "integer"
+      },
+      "goalType": {
+        "type": "string"
+      },
+      "totalTarget": {
+        "type": "integer"
+      }
+    },
+    "required": ["name", "period", "timesPerPeriod", "goalType"]
+  }
+}

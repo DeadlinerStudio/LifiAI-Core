@@ -49,6 +49,8 @@ pub struct ToolMetadata {
 pub enum ToolCapability {
     ReadTaskContext,
     ReadHabitContext,
+    CreateTask,
+    CreateHabit,
     UpdateTaskDeadline,
 }
 

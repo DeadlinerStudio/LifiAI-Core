@@ -123,37 +123,26 @@ impl Orchestrator {
     fn apply_retry_convergence_policy(
         context: &PendingToolContext,
         tool_error_code: Option<&str>,
-        original_text: &str,
         result: &mut MixedResult,
-    ) {
+    ) -> Result<(), AIError> {
         if tool_error_code.is_none() {
-            return;
+            return Ok(());
         }
 
         if context.retry_count >= 1 {
-            result.tool_calls = None;
-            result.requested_capabilities = None;
-            result.actions = None;
-            if result
-                .chat_response
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                result.chat_response = Some(format!(
-                    "工具 {} 已经失败过一次（errorCode={}），本轮不再自动重试。请你确认参数后我再继续：{}",
-                    context.tool_name,
-                    tool_error_code.unwrap_or("UNKNOWN"),
-                    original_text.trim()
-                ));
-            }
-            result.primary_intent = Some("Chat".to_string());
-            return;
+            return Err(AIError::InvalidToolCall(format!(
+                "工具 {} 已重试过一次（errorCode={}），禁止继续软兜底",
+                context.tool_name,
+                tool_error_code.unwrap_or("UNKNOWN")
+            )));
         }
 
         let Some(tool_calls) = result.tool_calls.as_mut() else {
-            return;
+            return Err(AIError::InvalidToolCall(format!(
+                "工具 {} 执行失败（errorCode={}）后必须继续给出同工具重试调用",
+                context.tool_name,
+                tool_error_code.unwrap_or("UNKNOWN")
+            )));
         };
 
         tool_calls.retain(|call| call.tool == context.tool_name);
@@ -186,18 +175,25 @@ impl Orchestrator {
         }
 
         if tool_calls.is_empty() {
-            result.chat_response = Some(format!(
-                "工具执行失败（errorCode={}），且新提议的工具不符合重试规约。请确认后我再继续。",
-                tool_error_code.unwrap_or("UNKNOWN")
-            ));
-            result.primary_intent = Some("Chat".to_string());
+            return Err(AIError::InvalidToolCall(format!(
+                "工具执行失败（errorCode={}）后禁止切换工具，当前必须继续调用 {}",
+                tool_error_code.unwrap_or("UNKNOWN"),
+                context.tool_name
+            )));
         }
+        Ok(())
     }
 
     pub async fn process_message_core(&self, text: String) -> Result<MixedResult, AIError> {
         // 1. 第一阶段：路由
         let route_info = self.route(&text).await?;
-        let routed_agents = route_info.routed_agents.clone().unwrap_or_default();
+        let mut routed_agents = route_info.routed_agents.clone().unwrap_or_default();
+        let has_domain_specialist = routed_agents
+            .iter()
+            .any(|agent| matches!(agent, AgentRole::TaskAgent | AgentRole::HabitAgent));
+        if has_domain_specialist {
+            routed_agents.retain(|agent| !matches!(agent, AgentRole::ChatAgent));
+        }
 
         if routed_agents.is_empty() {
             return Ok(MixedResult {
@@ -335,9 +331,8 @@ impl Orchestrator {
         Self::apply_retry_convergence_policy(
             &context,
             tool_error_code.as_deref(),
-            &original_text,
             &mut result,
-        );
+        )?;
         if !Self::observation_binding_satisfied(&context.role, &result, &result_json) {
             let mut rebound = self
                 .continue_with_tool_observation(
@@ -352,9 +347,8 @@ impl Orchestrator {
             Self::apply_retry_convergence_policy(
                 &context,
                 tool_error_code.as_deref(),
-                &original_text,
                 &mut rebound,
-            );
+            )?;
             result = rebound;
         }
         if result

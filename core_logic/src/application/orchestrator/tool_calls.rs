@@ -1,48 +1,13 @@
 impl Orchestrator {
     const TOOL_CONFIDENCE_THRESHOLD: usize = 3;
 
-    fn tool_guard_fallback_message(role: &AgentRole, original_text: &str) -> String {
-        let scope = match role {
-            AgentRole::TaskAgent => "任务",
-            AgentRole::HabitAgent => "习惯",
-            _ => "当前请求",
-        };
-        format!(
-            "我暂时不执行本地{}工具，以免产生误操作。请你确认一下需求后我再继续：{}",
-            scope,
-            original_text.trim()
-        )
-    }
-
-    fn downgrade_invalid_tooling(
-        role: &AgentRole,
-        original_text: &str,
-        result: &mut MixedResult,
-        err: &AIError,
-    ) {
-        logger::debug(&format!("Tool guard downgrade triggered: {}", err));
-        result.tool_calls = None;
-        result.requested_capabilities = None;
-        result.actions = None;
-        if result
-            .chat_response
-            .as_deref()
-            .unwrap_or("")
-            .trim()
-            .is_empty()
-        {
-            result.chat_response = Some(Self::tool_guard_fallback_message(role, original_text));
-        }
-        result.primary_intent = Some("Chat".to_string());
-    }
-
     fn normalize_and_validate_tool_calls_guarded(
         &self,
         role: &AgentRole,
         original_text: &str,
         result: &mut MixedResult,
     ) -> Result<(), AIError> {
-        let normalized = self
+        self
             .normalize_requested_capabilities_to_tool_calls(role, result)
             .and_then(|_| self.normalize_actions_to_tool_calls(role, result))
             .and_then(|_| {
@@ -50,19 +15,9 @@ impl Orchestrator {
                     self.validate_tool_calls(role, tool_calls)?;
                 }
                 Ok(())
-            });
-
-        match normalized {
-            Ok(()) => {
-                self.apply_tool_confidence_gate(role, original_text, result);
-                Ok(())
-            }
-            Err(err @ AIError::InvalidToolCall(_)) | Err(err @ AIError::ConfigError(_)) => {
-                Self::downgrade_invalid_tooling(role, original_text, result, &err);
-                Ok(())
-            }
-            Err(err) => Err(err),
-        }
+            })?;
+        self.apply_tool_confidence_gate(role, original_text, result);
+        Ok(())
     }
 
     fn apply_tool_confidence_gate(
@@ -110,6 +65,53 @@ impl Orchestrator {
                 });
             }
         }
+    }
+
+    fn enforce_specialist_tool_only_contract(
+        role: &AgentRole,
+        result: &MixedResult,
+    ) -> Result<(), AIError> {
+        match role {
+            AgentRole::TaskAgent => {
+                let has_tool = result
+                    .tool_calls
+                    .as_ref()
+                    .map(|calls| !calls.is_empty())
+                    .unwrap_or(false);
+                if !has_tool {
+                    return Err(AIError::InvalidToolCall(
+                        "TaskAgent 必须选择至少一个 toolCall，禁止空返回".to_string(),
+                    ));
+                }
+                let proposed_tasks = result.tasks.as_ref().map(|tasks| !tasks.is_empty()).unwrap_or(false);
+                if proposed_tasks {
+                    return Err(AIError::InvalidToolCall(
+                        "TaskAgent 禁止直接输出 tasks 提议，必须通过 toolCall 执行".to_string(),
+                    ));
+                }
+            }
+            AgentRole::HabitAgent => {
+                let has_tool = result
+                    .tool_calls
+                    .as_ref()
+                    .map(|calls| !calls.is_empty())
+                    .unwrap_or(false);
+                if !has_tool {
+                    return Err(AIError::InvalidToolCall(
+                        "HabitAgent 必须选择至少一个 toolCall，禁止空返回".to_string(),
+                    ));
+                }
+                let proposed_habits =
+                    result.habits.as_ref().map(|habits| !habits.is_empty()).unwrap_or(false);
+                if proposed_habits {
+                    return Err(AIError::InvalidToolCall(
+                        "HabitAgent 禁止直接输出 habits 提议，必须通过 toolCall 执行".to_string(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn is_intent_match_for_role(

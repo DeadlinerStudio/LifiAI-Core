@@ -464,7 +464,7 @@
             )
             .await;
 
-        let final_result = orchestrator
+        let err = orchestrator
             .submit_tool_result_core(
                 "retry-guard-tool-call".to_string(),
                 json!({
@@ -474,23 +474,11 @@
                 .to_string(),
             )
             .await
-            .unwrap()
-            .1;
-
-        assert!(
-            final_result
-                .tool_calls
-                .as_ref()
-                .map(|calls| calls.is_empty())
-                .unwrap_or(true)
-        );
-        assert!(
-            final_result
-                .chat_response
-                .as_deref()
-                .unwrap_or("")
-                .contains("不符合重试规约")
-        );
+            .expect_err("retry guard should reject tool switching");
+        match err {
+            AIError::InvalidToolCall(message) => assert!(message.contains("禁止切换工具")),
+            other => panic!("unexpected error: {}", other),
+        }
     }
 
     #[tokio::test]

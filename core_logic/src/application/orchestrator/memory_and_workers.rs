@@ -326,6 +326,7 @@ impl Orchestrator {
         };
         let mut normalized_result: MixedResult = worker_result.into();
         self.normalize_and_validate_tool_calls_guarded(&role, text, &mut normalized_result)?;
+        Self::enforce_specialist_tool_only_contract(&role, &normalized_result)?;
         Self::normalize_query_result(&role, text, &mut normalized_result);
         if let Some(tool_calls) = &mut normalized_result.tool_calls {
             for tool_call in tool_calls.iter_mut() {

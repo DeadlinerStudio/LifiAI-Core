@@ -1,7 +1,8 @@
 use crate::application::prompt_builder::PromptBuilder;
 use crate::domain::models::{
     AIActionCall, AIError, AIToolCall, AgentRole, CapabilityExecutionMode, CapabilityRequest,
-    ChatMessage, ChatRequest, MixedResult, PlannerResult, ToolCapability,
+    ChatMessage, ChatRequest, MAX_CONVERSATION_CONTEXT_TURNS, MixedResult, PlannerResult,
+    ToolCapability,
 };
 use crate::domain::traits::{AgentOrchestrator, LlmGateway, MemoryStore, ToolExecutor};
 use crate::infrastructure::logger;

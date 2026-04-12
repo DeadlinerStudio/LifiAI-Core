@@ -80,6 +80,18 @@ impl MemoryStore for MockMemoryStore {
     async fn drain_pending_sync(&self) -> Result<MemorySyncPayload, AIError> {
         Ok(MemorySyncPayload::default())
     }
+
+    async fn append_conversation_turn(
+        &self,
+        _role: String,
+        _content: String,
+    ) -> Result<(), AIError> {
+        Ok(())
+    }
+
+    async fn get_recent_conversation_context(&self, _limit: usize) -> Result<String, AIError> {
+        Ok(String::new())
+    }
 }
 
 fn build_test_registry() -> Arc<SkillRegistry> {

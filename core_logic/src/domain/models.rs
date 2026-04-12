@@ -9,6 +9,9 @@ pub const DEFAULT_TIME_FORMAT: &str = "%Y-%m-%d %H:%M";
 // 内存管理配置
 pub const MAX_MEMORY_FRAGMENTS: usize = 60;
 pub const MAX_MEMORY_AGE_DAYS: i64 = 120;
+pub const MAX_CONVERSATION_TURNS: usize = 24;
+pub const MAX_CONVERSATION_CONTEXT_TURNS: usize = 8;
+pub const MAX_CONVERSATION_MESSAGE_CHARS: usize = 400;
 
 // MARK: - Multi-Agent & Tool Metadata (Section 4 & 5)
 
@@ -99,6 +102,24 @@ impl MemoryFragment {
             category,
             timestamp: Utc::now(),
             importance: 3,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationTurn {
+    pub role: String,
+    pub content: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+impl ConversationTurn {
+    pub fn new(role: String, content: String) -> Self {
+        Self {
+            role,
+            content,
+            timestamp: Utc::now(),
         }
     }
 }

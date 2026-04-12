@@ -49,4 +49,8 @@ pub trait MemoryStore: Send + Sync {
     async fn current_snapshot(&self) -> Result<MemorySnapshot, AIError>;
     /// 读取并清空待同步增量（给原生端落库）
     async fn drain_pending_sync(&self) -> Result<MemorySyncPayload, AIError>;
+    /// 记录会话轮次（本地持久化）
+    async fn append_conversation_turn(&self, role: String, content: String) -> Result<(), AIError>;
+    /// 获取最近会话上下文（供 LLM 参考）
+    async fn get_recent_conversation_context(&self, limit: usize) -> Result<String, AIError>;
 }

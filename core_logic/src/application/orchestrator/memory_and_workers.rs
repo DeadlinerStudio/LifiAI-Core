@@ -9,6 +9,51 @@ impl Orchestrator {
         }
     }
 
+    async fn conversation_context_message(&self) -> Option<ChatMessage> {
+        match self
+            .memory_store
+            .get_recent_conversation_context(MAX_CONVERSATION_CONTEXT_TURNS)
+            .await
+        {
+            Ok(context) if !context.trim().is_empty() => Some(ChatMessage {
+                role: "system".to_string(),
+                content: format!("以下是最近几轮本地对话历史，请结合上下文回答：\n{}", context),
+            }),
+            _ => None,
+        }
+    }
+
+    async fn append_assistant_turn(&self, result: &MixedResult) {
+        let content = result
+            .chat_response
+            .clone()
+            .or_else(|| result.session_summary.clone())
+            .or_else(|| {
+                let task_count = result.tasks.as_ref().map(|items| items.len()).unwrap_or(0);
+                let habit_count = result.habits.as_ref().map(|items| items.len()).unwrap_or(0);
+                let tool_count = result
+                    .tool_calls
+                    .as_ref()
+                    .map(|items| items.len())
+                    .unwrap_or(0);
+                if task_count > 0 || habit_count > 0 || tool_count > 0 {
+                    Some(format!(
+                        "本轮处理结果：tasks={}, habits={}, toolCalls={}",
+                        task_count, habit_count, tool_count
+                    ))
+                } else {
+                    None
+                }
+            });
+
+        if let Some(content) = content {
+            let _ = self
+                .memory_store
+                .append_conversation_turn("assistant".to_string(), content)
+                .await;
+        }
+    }
+
     async fn persist_memory_updates(&self, result: &MixedResult) -> Result<(), AIError> {
         if let Some(profile) = &result.user_profile {
             self.memory_store.save_user_profile(profile.clone()).await?;
@@ -52,6 +97,9 @@ impl Orchestrator {
         }];
         if let Some(memory_message) = self.memory_context_message().await {
             messages.push(memory_message);
+        }
+        if let Some(conversation_message) = self.conversation_context_message().await {
+            messages.push(conversation_message);
         }
         messages.push(ChatMessage {
             role: "user".to_string(),
@@ -198,6 +246,9 @@ impl Orchestrator {
         if let Some(memory_message) = self.memory_context_message().await {
             messages.push(memory_message);
         }
+        if let Some(conversation_message) = self.conversation_context_message().await {
+            messages.push(conversation_message);
+        }
         messages.push(ChatMessage {
             role: "user".to_string(),
             content: observation_prompt,
@@ -243,6 +294,9 @@ impl Orchestrator {
         }];
         if let Some(memory_message) = self.memory_context_message().await {
             messages.push(memory_message);
+        }
+        if let Some(conversation_message) = self.conversation_context_message().await {
+            messages.push(conversation_message);
         }
         messages.push(ChatMessage {
             role: "user".to_string(),
@@ -298,6 +352,9 @@ impl Orchestrator {
         }];
         if let Some(memory_message) = self.memory_context_message().await {
             messages.push(memory_message);
+        }
+        if let Some(conversation_message) = self.conversation_context_message().await {
+            messages.push(conversation_message);
         }
         messages.push(ChatMessage {
             role: "user".to_string(),

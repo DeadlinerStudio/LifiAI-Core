@@ -185,6 +185,11 @@ impl Orchestrator {
     }
 
     pub async fn process_message_core(&self, text: String) -> Result<MixedResult, AIError> {
+        let _ = self
+            .memory_store
+            .append_conversation_turn("user".to_string(), text.clone())
+            .await;
+
         // 1. 第一阶段：路由
         let route_info = self.route(&text).await?;
         let mut routed_agents = route_info.routed_agents.clone().unwrap_or_default();
@@ -300,6 +305,7 @@ impl Orchestrator {
             final_result.primary_intent = Some("Chat".to_string());
         }
 
+        self.append_assistant_turn(&final_result).await;
         Ok(final_result)
     }
 
@@ -369,6 +375,7 @@ impl Orchestrator {
         {
             result.primary_intent = Some("Chat".to_string());
         }
+        self.append_assistant_turn(&result).await;
         Ok((original_text, result))
     }
 

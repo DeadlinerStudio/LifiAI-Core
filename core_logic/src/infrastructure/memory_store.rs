@@ -1,6 +1,7 @@
 use crate::domain::models::{
-    AIError, MAX_MEMORY_AGE_DAYS, MAX_MEMORY_FRAGMENTS, MemoryFragment, MemorySnapshot,
-    MemorySyncOperation, MemorySyncPayload,
+    AIError, ConversationTurn, MAX_CONVERSATION_CONTEXT_TURNS, MAX_CONVERSATION_MESSAGE_CHARS,
+    MAX_CONVERSATION_TURNS, MAX_MEMORY_AGE_DAYS, MAX_MEMORY_FRAGMENTS, MemoryFragment,
+    MemorySnapshot, MemorySyncOperation, MemorySyncPayload,
 };
 use crate::domain::traits::MemoryStore;
 use async_trait::async_trait;
@@ -17,6 +18,8 @@ struct StorageData {
     last_synced_revision: u64,
     fragments: Vec<MemoryFragment>,
     user_profile: String,
+    #[serde(default)]
+    conversation_history: Vec<ConversationTurn>,
     #[serde(skip)]
     pending_sync: Vec<MemorySyncOperation>,
 }
@@ -91,6 +94,26 @@ impl LocalMemoryStore {
             revision: data.revision,
             fragments: data.fragments.clone(),
             user_profile: data.user_profile.clone(),
+        }
+    }
+
+    fn normalize_content(raw: &str) -> String {
+        let trimmed = raw.trim();
+        if trimmed.chars().count() <= MAX_CONVERSATION_MESSAGE_CHARS {
+            return trimmed.to_string();
+        }
+        let mut normalized = trimmed
+            .chars()
+            .take(MAX_CONVERSATION_MESSAGE_CHARS)
+            .collect::<String>();
+        normalized.push('…');
+        normalized
+    }
+
+    fn normalize_role(raw: &str) -> String {
+        match raw.trim().to_lowercase().as_str() {
+            "assistant" => "assistant".to_string(),
+            _ => "user".to_string(),
         }
     }
 }
@@ -202,5 +225,51 @@ impl MemoryStore for LocalMemoryStore {
         data.last_synced_revision = data.revision;
         data.pending_sync.clear();
         Ok(payload)
+    }
+
+    async fn append_conversation_turn(&self, role: String, content: String) -> Result<(), AIError> {
+        let content = Self::normalize_content(&content);
+        if content.is_empty() {
+            return Ok(());
+        }
+
+        let role = Self::normalize_role(&role);
+        let mut data = self.data.write().await;
+        data.conversation_history
+            .push(ConversationTurn::new(role, content));
+        if data.conversation_history.len() > MAX_CONVERSATION_TURNS {
+            let overflow = data.conversation_history.len() - MAX_CONVERSATION_TURNS;
+            data.conversation_history.drain(0..overflow);
+        }
+        drop(data);
+        self.save_to_disk().await?;
+        Ok(())
+    }
+
+    async fn get_recent_conversation_context(&self, limit: usize) -> Result<String, AIError> {
+        let data = self.data.read().await;
+        if data.conversation_history.is_empty() {
+            return Ok(String::new());
+        }
+
+        let take = limit.max(1).min(MAX_CONVERSATION_CONTEXT_TURNS);
+        let lines = data
+            .conversation_history
+            .iter()
+            .rev()
+            .take(take)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|turn| {
+                let label = if turn.role == "assistant" {
+                    "助手"
+                } else {
+                    "用户"
+                };
+                format!("{}: {}", label, turn.content)
+            })
+            .collect::<Vec<_>>();
+        Ok(lines.join("\n"))
     }
 }

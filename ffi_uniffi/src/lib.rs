@@ -72,6 +72,8 @@ pub enum CoreError {
     EmptyResponse,
     #[error("MissingAPIKey")]
     MissingAPIKey,
+    #[error("InitFailed: {0}")]
+    InitFailed(String),
 }
 
 #[uniffi::export(callback_interface)]
@@ -103,16 +105,12 @@ impl DeadlinerCore {
         model_id: String,
         storage_path: String,
         platform: String,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            inner: inner_handlers::DeadlinerCore::new(
-                api_key,
-                base_url,
-                model_id,
-                storage_path,
-                platform,
-            ),
-        })
+    ) -> Result<Arc<Self>, CoreError> {
+        let inner =
+            inner_handlers::DeadlinerCore::new(api_key, base_url, model_id, storage_path, platform)
+                .map_err(CoreError::from)?;
+
+        Ok(Arc::new(Self { inner }))
     }
 
     pub fn set_callback(&self, callback: Box<dyn CoreCallback>) {
@@ -269,6 +267,7 @@ impl From<inner_handlers::CoreError> for CoreError {
             inner_handlers::CoreError::ParsingFailed => Self::ParsingFailed,
             inner_handlers::CoreError::EmptyResponse => Self::EmptyResponse,
             inner_handlers::CoreError::MissingAPIKey => Self::MissingAPIKey,
+            inner_handlers::CoreError::InitFailed(message) => Self::InitFailed(message),
         }
     }
 }

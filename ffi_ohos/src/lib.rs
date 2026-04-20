@@ -141,14 +141,15 @@ impl DeadlinerCoreOhos {
         model_id: String,
         storage_path: String,
         platform: String,
-    ) -> Self {
-        let inner = DeadlinerCore::new(api_key, base_url, model_id, storage_path, platform);
+    ) -> Result<Self> {
+        let inner = DeadlinerCore::new(api_key, base_url, model_id, storage_path, platform)
+            .map_err(|err| Error::from_reason(format!("DeadlinerCore init failed: {err}")))?;
         let event_queue = Arc::new(Mutex::new(Vec::new()));
         inner.set_callback(Box::new(QueueingCallback {
             queue: event_queue.clone(),
         }));
 
-        Self { inner, event_queue }
+        Ok(Self { inner, event_queue })
     }
 
     #[napi]

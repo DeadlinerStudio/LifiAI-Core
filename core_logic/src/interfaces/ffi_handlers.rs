@@ -68,12 +68,14 @@ impl DeadlinerCore {
         model_id: String,
         storage_path: String,
         platform: String,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, CoreError> {
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
-                .expect("failed to build Tokio runtime for DeadlinerCore"),
+                .map_err(|err| {
+                    CoreError::InitFailed(format!("failed to build Tokio runtime: {err}"))
+                })?,
         );
 
         let storage_dir = PathBuf::from(storage_path);
@@ -85,10 +87,9 @@ impl DeadlinerCore {
         let llm_gateway = Arc::new(DeepSeekClient::new(api_key, base_url, model_id));
         let callback = Arc::new(Mutex::new(None));
         let skills_dir = Self::workspace_root().join("skills");
-        let skill_registry = Arc::new(
-            SkillRegistry::load_from_dir(skills_dir)
-                .expect("failed to load skills from directory"),
-        );
+        let skill_registry = Arc::new(SkillRegistry::load_from_dir(skills_dir).map_err(|err| {
+            CoreError::InitFailed(format!("failed to load skills from directory: {err}"))
+        })?);
         let orchestrator = Arc::new(Orchestrator::new(
             llm_gateway,
             memory_store.clone() as Arc<dyn MemoryStore>,
@@ -96,17 +97,21 @@ impl DeadlinerCore {
             platform,
             "zh-CN".to_string(),
         ));
-        runtime.block_on(orchestrator.set_progress_sink(Arc::new(FfiProgressSink {
-            callback: callback.clone(),
-        })));
+        runtime
+            .block_on(orchestrator.set_progress_sink(Arc::new(FfiProgressSink {
+                callback: callback.clone(),
+            })))
+            .map_err(|err| {
+                CoreError::InitFailed(format!("failed to set progress sink: {err}"))
+            })?;
 
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             orchestrator,
             memory_store,
             runtime,
             callback,
             latest_state: Arc::new(Mutex::new(LatestState::default())),
-        })
+        }))
     }
 
     pub fn set_callback(&self, callback: Box<dyn CoreCallback>) {
@@ -529,4 +534,6 @@ pub enum CoreError {
     EmptyResponse,
     #[error("MissingAPIKey")]
     MissingAPIKey,
+    #[error("InitFailed: {0}")]
+    InitFailed(String),
 }

@@ -171,9 +171,11 @@ impl Orchestrator {
         role: AgentRole,
         original_text: String,
         result_json: String,
+        executed_tool_name: Option<&str>,
         retry_tool_name: Option<&str>,
         tool_error_code: Option<&str>,
         enforce_observation_binding: bool,
+        enforce_followup_write_call: bool,
     ) -> Result<MixedResult, AIError> {
         self.emit_thinking(
             role.as_label(),
@@ -220,6 +222,22 @@ impl Orchestrator {
             String::new()
         };
 
+        let followup_write_guard = if enforce_followup_write_call {
+            format!(
+                r#"
+补充约束（查重后继续执行）：
+- 你上一轮先调用了 {} 做查重/读取上下文，observation 显示当前没有可匹配的重复任务。
+- 原始用户请求是新增或改期，不是查询，所以这一轮不能只给 chatResponse。
+- 你必须输出下一步写操作 toolCall：
+  - 新增任务：create_task
+  - 修改截止时间：update_deadline
+- 如果参数还不完整，也必须输出上述写操作 toolCall，并将 executionMode 设为 "ASK_USER"。"#,
+                executed_tool_name.unwrap_or("read_tasks")
+            )
+        } else {
+            String::new()
+        };
+
         let observation_prompt = format!(
             r#"你现在处于工具调用后的第二阶段整理。
 
@@ -235,8 +253,8 @@ impl Orchestrator {
 3. 只有当工具结果明确表明没有相关数据，且用户输入也不足以生成结果时，才能输出空数组。
 4. 这一轮默认应该给最终答案；若信息已经足够，禁止再次输出 toolCalls。
 5. 如果原始用户输入是在查看/列出/总结已有内容，那么这是查询请求，不是新增请求。此时应优先输出 chatResponse，总结 observation；tasks/habits 应为空数组，除非用户明确要求新增或修改。
-6. 只输出纯 JSON。{}{}"#,
-            original_text, result_json, retry_guard, binding_guard
+6. 只输出纯 JSON。{}{}{}"#,
+            original_text, result_json, retry_guard, binding_guard, followup_write_guard
         );
 
         let mut messages = vec![ChatMessage {

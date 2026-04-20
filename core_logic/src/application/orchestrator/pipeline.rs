@@ -56,6 +56,18 @@ impl Orchestrator {
             .collect()
     }
 
+    fn observation_field_has_items(result_json: &str, field: &str) -> bool {
+        let value: Value = match serde_json::from_str(result_json) {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        value
+            .get(field)
+            .and_then(Value::as_array)
+            .map(|items| !items.is_empty())
+            .unwrap_or(false)
+    }
+
     fn observation_binding_satisfied(role: &AgentRole, result: &MixedResult, result_json: &str) -> bool {
         match role {
             AgentRole::TaskAgent => {
@@ -329,8 +341,10 @@ impl Orchestrator {
                 context.role.clone(),
                 original_text.clone(),
                 result_json.clone(),
+                Some(context.tool_name.as_str()),
                 tool_error_code.as_ref().map(|_| context.tool_name.as_str()),
                 tool_error_code.as_deref(),
+                false,
                 false,
             )
             .await?;
@@ -345,9 +359,11 @@ impl Orchestrator {
                     context.role.clone(),
                     original_text.clone(),
                     result_json.clone(),
+                    Some(context.tool_name.as_str()),
                     tool_error_code.as_ref().map(|_| context.tool_name.as_str()),
                     tool_error_code.as_deref(),
                     true,
+                    false,
                 )
                 .await?;
             Self::apply_retry_convergence_policy(
@@ -356,6 +372,35 @@ impl Orchestrator {
                 &mut rebound,
             )?;
             result = rebound;
+        }
+
+        let needs_followup_write_call = matches!(context.role, AgentRole::TaskAgent)
+            && context.tool_name == "read_tasks"
+            && !Self::is_query_request(&context.role, &original_text)
+            && !Self::observation_field_has_items(&result_json, "tasks")
+            && result
+                .tool_calls
+                .as_ref()
+                .map(|calls| calls.is_empty())
+                .unwrap_or(true);
+        if needs_followup_write_call {
+            result = self
+                .continue_with_tool_observation(
+                    context.role.clone(),
+                    original_text.clone(),
+                    result_json.clone(),
+                    Some(context.tool_name.as_str()),
+                    tool_error_code.as_ref().map(|_| context.tool_name.as_str()),
+                    tool_error_code.as_deref(),
+                    false,
+                    true,
+                )
+                .await?;
+            Self::apply_retry_convergence_policy(
+                &context,
+                tool_error_code.as_deref(),
+                &mut result,
+            )?;
         }
         if result
             .tasks

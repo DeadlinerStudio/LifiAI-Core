@@ -95,24 +95,43 @@ impl MemoryStore for MockMemoryStore {
 }
 
 fn build_test_registry() -> Arc<SkillRegistry> {
-    Arc::new(SkillRegistry::from_skills(vec![ToolMetadata {
-        name: "read_tasks".to_string(),
-        description: "读取任务".to_string(),
-        domain: AgentRole::TaskAgent,
-        capabilities: vec![ToolCapability::ReadTaskContext],
-        supported_platforms: vec!["ios".to_string(), "android".to_string()],
-        requires_ui_confirmation: false,
-        parameters: json!({
-            "type": "object",
-            "properties": {
-                "timeRangeDays": { "type": "integer" },
-                "keywords": {
-                    "type": "array",
-                    "items": { "type": "string" }
+    Arc::new(SkillRegistry::from_skills(vec![
+        ToolMetadata {
+            name: "read_tasks".to_string(),
+            description: "读取任务".to_string(),
+            domain: AgentRole::TaskAgent,
+            capabilities: vec![ToolCapability::ReadTaskContext],
+            supported_platforms: vec!["ios".to_string(), "android".to_string()],
+            requires_ui_confirmation: false,
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "timeRangeDays": { "type": "integer" },
+                    "keywords": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    }
                 }
-            }
-        }),
-    }]))
+            }),
+        },
+        ToolMetadata {
+            name: "create_task".to_string(),
+            description: "创建任务".to_string(),
+            domain: AgentRole::TaskAgent,
+            capabilities: vec![ToolCapability::CreateTask],
+            supported_platforms: vec!["ios".to_string(), "android".to_string()],
+            requires_ui_confirmation: true,
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "dueTime": { "type": "string" },
+                    "note": { "type": "string" }
+                },
+                "required": ["name"]
+            }),
+        },
+    ]))
 }
 
 include!("flow_loop_tests.rs");

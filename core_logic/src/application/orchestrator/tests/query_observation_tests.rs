@@ -113,6 +113,114 @@
     }
 
     #[tokio::test]
+    async fn task_creation_after_dedup_read_tasks_requires_create_task_followup() {
+        let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
+            json!({
+                "primaryIntent": "ExtractTasks",
+                "routedAgents": ["TaskAgent"]
+            })
+            .to_string(),
+            json!({
+                "toolCalls": [
+                    {
+                        "tool": "read_tasks",
+                        "args": {
+                            "keywords": ["穿山甲", "技术方案"],
+                            "timeRangeDays": 7
+                        },
+                        "reason": "先检查是否重复",
+                        "executionMode": "AUTO"
+                    }
+                ]
+            })
+            .to_string(),
+            json!({
+                "tasks": [],
+                "chatResponse": "没有重复任务，已帮你创建新任务。",
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "tasks": [],
+                "toolCalls": [
+                    {
+                        "tool": "create_task",
+                        "args": {
+                            "name": "穿山甲需求技术方案写完",
+                            "note": "两天内完成"
+                        },
+                        "reason": "查重为空后继续执行新增任务",
+                        "executionMode": "ASK_USER"
+                    }
+                ]
+            })
+            .to_string(),
+        ]));
+
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(MockMemoryStore);
+        let orchestrator = Orchestrator::new(
+            llm_gateway,
+            memory_store,
+            build_test_registry(),
+            "ios".to_string(),
+            "zh-CN".to_string(),
+        );
+
+        let user_input = "这两天之内要把穿山甲需求的技术方案写完".to_string();
+        let initial_result = orchestrator
+            .process_message_core(user_input.clone())
+            .await
+            .unwrap();
+        let tool_call = initial_result
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .cloned()
+            .expect("expected read_tasks call");
+
+        orchestrator
+            .register_pending_tool_call(
+                "create-followup-tool-call".to_string(),
+                tool_call.agent.unwrap_or(AgentRole::TaskAgent),
+                user_input,
+                "read_tasks".to_string(),
+                0,
+            )
+            .await;
+
+        let final_result = orchestrator
+            .submit_tool_result_core(
+                "create-followup-tool-call".to_string(),
+                json!({
+                    "summary": {
+                        "count": 0,
+                        "dueSoon24h": 0,
+                        "overdue": 0
+                    },
+                    "tasks": []
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap()
+            .1;
+
+        let followup_call = final_result
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .expect("expected follow-up create_task call");
+        assert_eq!(followup_call.tool, "create_task");
+        assert_eq!(
+            followup_call
+                .args
+                .get("name")
+                .and_then(serde_json::Value::as_str),
+            Some("穿山甲需求技术方案写完")
+        );
+    }
+
+    #[tokio::test]
     async fn task_query_returns_chat_response_instead_of_task_proposals() {
         let llm_gateway: Arc<dyn LlmGateway> = Arc::new(MockLlmGateway::new(vec![
             json!({

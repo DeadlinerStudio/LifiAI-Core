@@ -97,13 +97,9 @@ impl DeadlinerCore {
             platform,
             "zh-CN".to_string(),
         ));
-        runtime
-            .block_on(orchestrator.set_progress_sink(Arc::new(FfiProgressSink {
-                callback: callback.clone(),
-            })))
-            .map_err(|err| {
-                CoreError::InitFailed(format!("failed to set progress sink: {err}"))
-            })?;
+        runtime.block_on(orchestrator.set_progress_sink(Arc::new(FfiProgressSink {
+            callback: callback.clone(),
+        })));
 
         Ok(Arc::new(Self {
             orchestrator,

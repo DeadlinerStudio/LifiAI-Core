@@ -12,7 +12,8 @@
         "type": "string"
       },
       "dueTime": {
-        "type": "string"
+        "type": "string",
+        "description": "截止时间，格式必须为 YYYY-MM-DD HH:MM"
       },
       "note": {
         "type": "string"

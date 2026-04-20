@@ -1,9 +1,16 @@
 use super::*;
 
 #[test]
-fn falls_back_to_builtin_registry_when_dir_is_missing() {
-    let registry = SkillRegistry::load_from_dir_or_builtin("/tmp/deadliner-missing-skills-dir")
-        .expect("registry should load");
+fn registry_can_be_created_from_skills() {
+    let registry = SkillRegistry::from_skills(vec![ToolMetadata {
+        name: "test_tool".to_string(),
+        description: "test".to_string(),
+        domain: AgentRole::TaskAgent,
+        capabilities: vec![ToolCapability::ReadTaskContext],
+        supported_platforms: vec!["ios".to_string()],
+        requires_ui_confirmation: false,
+        parameters: json!({}),
+    }]);
 
     let resolved = registry.resolve_execution_plan(
         &AgentRole::TaskAgent,
@@ -13,14 +20,32 @@ fn falls_back_to_builtin_registry_when_dir_is_missing() {
         None,
     );
 
-    let plan = resolved.expect("builtin read_tasks should be available");
-    assert_eq!(plan.tool_name, "read_tasks");
-    assert_eq!(plan.execution_mode, CapabilityExecutionMode::Auto);
+    let plan = resolved.expect("test_tool should be available");
+    assert_eq!(plan.tool_name, "test_tool");
 }
 
 #[test]
-fn builtin_registry_exposes_habit_and_task_capabilities() {
-    let registry = SkillRegistry::builtin();
+fn registry_exposes_habit_and_task_capabilities() {
+    let registry = SkillRegistry::from_skills(vec![
+        ToolMetadata {
+            name: "read_tasks".to_string(),
+            description: "read tasks".to_string(),
+            domain: AgentRole::TaskAgent,
+            capabilities: vec![ToolCapability::ReadTaskContext],
+            supported_platforms: vec!["ios".to_string()],
+            requires_ui_confirmation: false,
+            parameters: json!({}),
+        },
+        ToolMetadata {
+            name: "read_habits".to_string(),
+            description: "read habits".to_string(),
+            domain: AgentRole::HabitAgent,
+            capabilities: vec![ToolCapability::ReadHabitContext],
+            supported_platforms: vec!["ios".to_string()],
+            requires_ui_confirmation: false,
+            parameters: json!({}),
+        },
+    ]);
 
     let task_candidates = registry.candidates_for_capability(
         &AgentRole::TaskAgent,

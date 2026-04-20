@@ -86,8 +86,8 @@ impl DeadlinerCore {
         let callback = Arc::new(Mutex::new(None));
         let skills_dir = Self::workspace_root().join("skills");
         let skill_registry = Arc::new(
-            SkillRegistry::load_from_dir_or_builtin(skills_dir)
-                .unwrap_or_else(|_| SkillRegistry::builtin()),
+            SkillRegistry::load_from_dir(skills_dir)
+                .expect("failed to load skills from directory"),
         );
         let orchestrator = Arc::new(Orchestrator::new(
             llm_gateway,

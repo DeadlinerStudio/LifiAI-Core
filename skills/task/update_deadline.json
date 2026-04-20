@@ -12,7 +12,8 @@
         "type": "string"
       },
       "newDueTime": {
-        "type": "string"
+        "type": "string",
+        "description": "新的截止时间，格式必须为 YYYY-MM-DD HH:MM"
       }
     },
     "required": ["taskId", "newDueTime"]

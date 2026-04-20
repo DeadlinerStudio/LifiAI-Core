@@ -272,7 +272,7 @@ async fn run_real_mode(platform: String) -> Result<(), Box<dyn std::error::Error
 
     let memory_store: Arc<dyn MemoryStore> = Arc::new(LocalMemoryStore::new(storage_dir));
     let llm_gateway: Arc<dyn LlmGateway> = Arc::new(DeepSeekClient::new(api_key, base_url, model));
-    let skill_registry = Arc::new(SkillRegistry::load_from_dir_or_builtin(skills_dir)?);
+    let skill_registry = Arc::new(SkillRegistry::load_from_dir(skills_dir)?);
 
     let orchestrator = Orchestrator::new(
         llm_gateway,

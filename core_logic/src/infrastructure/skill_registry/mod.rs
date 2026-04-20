@@ -5,7 +5,6 @@ use crate::domain::models::{
     AIError, AgentRole, CapabilityExecutionMode, ResolvedToolCandidate, ToolCapability,
     ToolExecutionPlan, ToolMetadata,
 };
-use serde_json::json;
 
 #[derive(Debug, Clone, Default)]
 pub struct SkillRegistry {
@@ -21,145 +20,24 @@ impl SkillRegistry {
         Self { skills }
     }
 
-    pub fn builtin() -> Self {
-        Self {
-            skills: vec![
-                ToolMetadata {
-                    name: "read_tasks".to_string(),
-                    description: "读取用户本地的任务列表，用于去重、冲突检测或补充上下文。"
-                        .to_string(),
-                    domain: AgentRole::TaskAgent,
-                    capabilities: vec![ToolCapability::ReadTaskContext],
-                    supported_platforms: vec![
-                        "ios".to_string(),
-                        "android".to_string(),
-                        "harmony".to_string(),
-                    ],
-                    requires_ui_confirmation: false,
-                    parameters: json!({
-                        "type": "object",
-                        "properties": {
-                            "timeRangeDays": {
-                                "type": "integer",
-                                "default": 7
-                            },
-                            "keywords": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                }
-                            }
-                        }
-                    }),
-                },
-                ToolMetadata {
-                    name: "create_task".to_string(),
-                    description: "创建单次任务。仅当用户明确表达新增/添加任务时使用，不用于查询。"
-                        .to_string(),
-                    domain: AgentRole::TaskAgent,
-                    capabilities: vec![ToolCapability::CreateTask],
-                    supported_platforms: vec![
-                        "ios".to_string(),
-                        "android".to_string(),
-                        "harmony".to_string(),
-                    ],
-                    requires_ui_confirmation: true,
-                    parameters: json!({
-                        "type": "object",
-                        "properties": {
-                            "name": { "type": "string" },
-                            "dueTime": { "type": "string" },
-                            "note": { "type": "string" }
-                        },
-                        "required": ["name"]
-                    }),
-                },
-                ToolMetadata {
-                    name: "update_deadline".to_string(),
-                    description: "修改已有任务的截止时间，适用于用户明确表达延期、改期或重新安排。"
-                        .to_string(),
-                    domain: AgentRole::TaskAgent,
-                    capabilities: vec![ToolCapability::UpdateTaskDeadline],
-                    supported_platforms: vec![
-                        "ios".to_string(),
-                        "android".to_string(),
-                        "harmony".to_string(),
-                    ],
-                    requires_ui_confirmation: true,
-                    parameters: json!({
-                        "type": "object",
-                        "properties": {
-                            "taskId": {
-                                "type": "string"
-                            },
-                            "newDueTime": {
-                                "type": "string"
-                            }
-                        },
-                        "required": ["taskId", "newDueTime"]
-                    }),
-                },
-                ToolMetadata {
-                    name: "create_habit".to_string(),
-                    description:
-                        "创建周期性习惯。仅当用户明确表达新增/创建习惯时使用，不用于查询。"
-                            .to_string(),
-                    domain: AgentRole::HabitAgent,
-                    capabilities: vec![ToolCapability::CreateHabit],
-                    supported_platforms: vec![
-                        "ios".to_string(),
-                        "android".to_string(),
-                        "harmony".to_string(),
-                    ],
-                    requires_ui_confirmation: true,
-                    parameters: json!({
-                        "type": "object",
-                        "properties": {
-                            "name": { "type": "string" },
-                            "period": { "type": "string" },
-                            "timesPerPeriod": { "type": "integer" },
-                            "goalType": { "type": "string" },
-                            "totalTarget": { "type": "integer" }
-                        },
-                        "required": ["name", "period", "timesPerPeriod", "goalType"]
-                    }),
-                },
-                ToolMetadata {
-                    name: "read_habits".to_string(),
-                    description: "读取用户现有习惯列表，用于避免重复创建或辅助判断频率配置。"
-                        .to_string(),
-                    domain: AgentRole::HabitAgent,
-                    capabilities: vec![ToolCapability::ReadHabitContext],
-                    supported_platforms: vec![
-                        "ios".to_string(),
-                        "android".to_string(),
-                        "harmony".to_string(),
-                    ],
-                    requires_ui_confirmation: false,
-                    parameters: json!({
-                        "type": "object",
-                        "properties": {
-                            "keywords": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                }
-                            }
-                        }
-                    }),
-                },
-            ],
-        }
-    }
-
     pub fn load_from_dir(dir: impl AsRef<Path>) -> Result<Self, AIError> {
         let dir = dir.as_ref();
         if !dir.exists() {
-            return Ok(Self::empty());
+            return Err(AIError::ConfigError(format!(
+                "Skill 目录不存在: {}",
+                dir.display()
+            )));
         }
 
         let mut files = Vec::new();
         Self::collect_json_files(dir, &mut files)?;
+
+        if files.is_empty() {
+            return Err(AIError::ConfigError(format!(
+                "Skill 目录为空: {}",
+                dir.display()
+            )));
+        }
 
         let mut skills = Vec::new();
         for file in files {
@@ -173,15 +51,6 @@ impl SkillRegistry {
         }
 
         Ok(Self { skills })
-    }
-
-    pub fn load_from_dir_or_builtin(dir: impl AsRef<Path>) -> Result<Self, AIError> {
-        let registry = Self::load_from_dir(dir)?;
-        if registry.skills.is_empty() {
-            Ok(Self::builtin())
-        } else {
-            Ok(registry)
-        }
     }
 
     pub fn for_role_and_platform(&self, role: &AgentRole, platform: &str) -> Vec<ToolMetadata> {

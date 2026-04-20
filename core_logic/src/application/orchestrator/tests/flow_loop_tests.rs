@@ -29,13 +29,25 @@
             })
             .to_string(),
             json!({
-                "tasks": [
+                "chatResponse": "没有重复任务，准备继续创建。",
+                "tasks": [],
+                "toolCalls": []
+            })
+            .to_string(),
+            json!({
+                "toolCalls": [
                     {
-                        "name": "写 Rust 冒烟测试",
-                        "dueTime": "2026-03-19 10:00",
-                        "note": "避免重复后确认创建"
+                        "tool": "create_task",
+                        "args": {
+                            "name": "写 Rust 冒烟测试",
+                            "dueTime": "2026-03-19 10:00",
+                            "note": "避免重复后确认创建"
+                        },
+                        "reason": "去重为空后继续新增任务",
+                        "executionMode": "ASK_USER"
                     }
-                ]
+                ],
+                "tasks": []
             })
             .to_string(),
             json!({
@@ -95,8 +107,17 @@
             .await
             .unwrap();
 
-        let tasks = final_result.tasks.expect("expected extracted tasks");
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].name, "写 Rust 冒烟测试");
-        assert_eq!(tasks[0].due_time.as_deref(), Some("2026-03-19 10:00"));
+        let followup_call = final_result
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .expect("expected follow-up create_task tool call");
+        assert_eq!(followup_call.tool, "create_task");
+        assert_eq!(
+            followup_call
+                .args
+                .get("name")
+                .and_then(serde_json::Value::as_str),
+            Some("写 Rust 冒烟测试")
+        );
     }

@@ -231,6 +231,7 @@ impl Orchestrator {
 - 你必须输出下一步写操作 toolCall：
   - 新增任务：create_task
   - 修改截止时间：update_deadline
+  - 新增习惯：create_habit
 - 如果参数还不完整，也必须输出上述写操作 toolCall，并将 executionMode 设为 "ASK_USER"。"#,
                 executed_tool_name.unwrap_or("read_tasks")
             )

@@ -293,6 +293,11 @@ impl Orchestrator {
         self.normalize_and_validate_tool_calls_guarded(&role, &original_text, &mut worker_result)?;
         Self::apply_observation_fallback(&role, &result_json, &mut worker_result);
         Self::normalize_query_result(&role, &original_text, &mut worker_result);
+        if let Some(tool_calls) = &mut worker_result.tool_calls {
+            for tool_call in tool_calls.iter_mut() {
+                tool_call.agent = Some(role.clone());
+            }
+        }
         Ok(worker_result)
     }
 

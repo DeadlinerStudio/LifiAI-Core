@@ -211,6 +211,7 @@
             .and_then(|calls| calls.first())
             .expect("expected follow-up create_task call");
         assert_eq!(followup_call.tool, "create_task");
+        assert_eq!(followup_call.agent, Some(AgentRole::TaskAgent));
         assert_eq!(
             followup_call
                 .args

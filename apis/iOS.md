@@ -73,6 +73,8 @@ let storagePath = FileManager.default
 - `DEEPSEEK_BASE_URL`
 - `DEEPSEEK_MODEL`
 
+`skills` 现在由 Rust 在编译期内嵌进库中，iOS 运行时不再需要额外拷贝 `skills/` 目录。
+
 ## 5. 对外核心 API
 
 当前 UniFFI 导出的主要能力如下：

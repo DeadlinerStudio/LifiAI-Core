@@ -9,16 +9,20 @@
     "type": "object",
     "properties": {
       "name": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       },
       "dueTime": {
         "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$",
         "description": "截止时间，格式必须为 YYYY-MM-DD HH:MM"
       },
       "note": {
-        "type": "string"
+        "type": "string",
+        "description": "任务备注"
       }
     },
-    "required": ["name"]
+    "required": ["name"],
+    "additionalProperties": false
   }
 }

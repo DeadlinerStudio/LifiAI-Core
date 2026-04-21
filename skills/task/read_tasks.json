@@ -10,14 +10,33 @@
     "properties": {
       "timeRangeDays": {
         "type": "integer",
+        "minimum": 1,
         "default": 7
+      },
+      "status": {
+        "type": "string",
+        "enum": ["OPEN", "DONE", "ALL"],
+        "default": "OPEN"
       },
       "keywords": {
         "type": "array",
+        "maxItems": 3,
         "items": {
           "type": "string"
         }
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+        "default": 20
+      },
+      "sort": {
+        "type": "string",
+        "enum": ["DUE_ASC", "UPDATED_DESC"],
+        "default": "DUE_ASC"
       }
-    }
+    },
+    "additionalProperties": false
   }
 }

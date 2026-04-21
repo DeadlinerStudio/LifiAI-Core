@@ -10,10 +10,12 @@
     "properties": {
       "keywords": {
         "type": "array",
+        "maxItems": 3,
         "items": {
           "type": "string"
         }
       }
-    }
+    },
+    "additionalProperties": false
   }
 }

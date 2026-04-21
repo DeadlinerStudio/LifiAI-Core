@@ -12,18 +12,36 @@
         "type": "string"
       },
       "period": {
-        "type": "string"
+        "type": "string",
+        "enum": ["DAILY", "WEEKLY", "MONTHLY", "ONCE", "EBBINGHAUS"]
       },
       "timesPerPeriod": {
-        "type": "integer"
+        "type": "integer",
+        "minimum": 1
       },
       "goalType": {
-        "type": "string"
+        "type": "string",
+        "enum": ["PER_PERIOD", "TOTAL"]
       },
       "totalTarget": {
-        "type": "integer"
+        "type": "integer",
+        "minimum": 1
       }
     },
-    "required": ["name", "period", "timesPerPeriod", "goalType"]
+    "required": ["name", "period", "timesPerPeriod", "goalType"],
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "goalType": { "const": "TOTAL" }
+          },
+          "required": ["goalType"]
+        },
+        "then": {
+          "required": ["totalTarget"]
+        }
+      }
+    ],
+    "additionalProperties": false
   }
 }

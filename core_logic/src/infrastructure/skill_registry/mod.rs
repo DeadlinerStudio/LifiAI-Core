@@ -6,6 +6,10 @@ use crate::domain::models::{
     ToolExecutionPlan, ToolMetadata,
 };
 
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/embedded_skills.rs"));
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SkillRegistry {
     skills: Vec<ToolMetadata>,
@@ -48,6 +52,24 @@ impl SkillRegistry {
                 AIError::ConfigError(format!("无法解析 skill 文件 {}: {}", file.display(), err))
             })?;
             skills.push(metadata);
+        }
+
+        Ok(Self { skills })
+    }
+
+    pub fn load_embedded() -> Result<Self, AIError> {
+        let mut skills = Vec::new();
+        for (origin, content) in embedded::embedded_skills() {
+            let metadata = serde_json::from_str::<ToolMetadata>(content).map_err(|err| {
+                AIError::ConfigError(format!("无法解析内嵌 skill 文件 {}: {}", origin, err))
+            })?;
+            skills.push(metadata);
+        }
+
+        if skills.is_empty() {
+            return Err(AIError::ConfigError(
+                "内嵌 skills 为空，请检查构建时是否包含 skills/*.json".to_string(),
+            ));
         }
 
         Ok(Self { skills })

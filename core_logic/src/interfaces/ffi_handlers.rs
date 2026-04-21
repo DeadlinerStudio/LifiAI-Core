@@ -1,5 +1,5 @@
 use crate::application::orchestrator::{Orchestrator, OrchestratorProgressSink};
-use crate::domain::models::{CapabilityExecutionMode, MemorySnapshot, MixedResult};
+use crate::domain::models::{AgentRole, CapabilityExecutionMode, MemorySnapshot, MixedResult};
 use crate::domain::traits::MemoryStore;
 use crate::infrastructure::llm_client::DeepSeekClient;
 use crate::infrastructure::memory_store::LocalMemoryStore;
@@ -55,11 +55,12 @@ pub struct DeadlinerCore {
 }
 
 impl DeadlinerCore {
-    fn workspace_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+    fn infer_agent_from_tool_name(tool_name: &str) -> Option<AgentRole> {
+        match tool_name {
+            "read_tasks" | "create_task" | "update_deadline" => Some(AgentRole::TaskAgent),
+            "read_habits" | "create_habit" => Some(AgentRole::HabitAgent),
+            _ => None,
+        }
     }
 
     pub fn new(
@@ -86,9 +87,8 @@ impl DeadlinerCore {
         let memory_store = Arc::new(LocalMemoryStore::new(storage_dir));
         let llm_gateway = Arc::new(DeepSeekClient::new(api_key, base_url, model_id));
         let callback = Arc::new(Mutex::new(None));
-        let skills_dir = Self::workspace_root().join("skills");
-        let skill_registry = Arc::new(SkillRegistry::load_from_dir(skills_dir).map_err(|err| {
-            CoreError::InitFailed(format!("failed to load skills from directory: {err}"))
+        let skill_registry = Arc::new(SkillRegistry::load_embedded().map_err(|err| {
+            CoreError::InitFailed(format!("failed to load embedded skills: {err}"))
         })?);
         let orchestrator = Arc::new(Orchestrator::new(
             llm_gateway,
@@ -282,7 +282,11 @@ impl DeadlinerCore {
             if let Some(tool) = tool_calls.first() {
                 let tool_call_id = uuid::Uuid::new_v4().to_string();
                 let retry_count = Self::extract_retry_count(&tool.args);
-                if let Some(agent) = tool.agent.clone() {
+                let agent = tool
+                    .agent
+                    .clone()
+                    .or_else(|| Self::infer_agent_from_tool_name(&tool.tool));
+                if let Some(agent) = agent {
                     self.send_event(CoreEvent::OnThinking {
                         agent_name: agent.as_label().to_string(),
                         phase: "tool_wait".to_string(),

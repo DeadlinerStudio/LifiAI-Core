@@ -22,7 +22,7 @@
         "description": "任务备注"
       }
     },
-    "required": ["name"],
+    "required": ["name", "dueTime"],
     "additionalProperties": false
   }
 }

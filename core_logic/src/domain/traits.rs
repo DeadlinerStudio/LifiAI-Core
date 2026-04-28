@@ -10,6 +10,7 @@ use async_trait::async_trait;
 pub trait LlmGateway: Send + Sync {
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, AIError>;
     fn get_model_name(&self) -> String;
+    fn get_temperature(&self) -> f64;
 }
 
 /// Agent 编排器接口

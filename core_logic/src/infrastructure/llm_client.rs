@@ -49,12 +49,7 @@ impl LlmGateway for DeepSeekClient {
         let url = self.normalize_url();
         let mut req_builder = self.client.post(&url);
 
-        // 兼容 MiMo 的特殊 Header
-        if self.base_url.contains("xiaomimimo.com") {
-            req_builder = req_builder.header("api-key", &self.api_key);
-        } else {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", self.api_key));
-        }
+        req_builder = req_builder.header("Authorization", format!("Bearer {}", self.api_key));
 
         let response = req_builder
             .json(&request)
@@ -78,5 +73,15 @@ impl LlmGateway for DeepSeekClient {
 
     fn get_model_name(&self) -> String {
         self.model.clone()
+    }
+
+    fn get_temperature(&self) -> f64 {
+        let is_moonshot = self.base_url.to_lowercase().contains("api.moonshot.cn");
+
+        if is_moonshot {
+            1.0
+        } else {
+            0.1
+        }
     }
 }

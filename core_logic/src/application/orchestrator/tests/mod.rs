@@ -43,6 +43,10 @@ impl LlmGateway for MockLlmGateway {
     fn get_model_name(&self) -> String {
         self.model.clone()
     }
+
+    fn get_temperature(&self) -> f64 {
+        0.1
+    }
 }
 
 struct MockMemoryStore;

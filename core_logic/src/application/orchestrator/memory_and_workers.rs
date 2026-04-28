@@ -106,11 +106,7 @@ impl Orchestrator {
             content: synthesis_prompt,
         });
 
-        let request = ChatRequest {
-            model: self.llm_gateway.get_model_name(),
-            messages,
-            temperature: 0.1,
-        };
+        let request = self.get_chat_request(messages);
 
         let response = self.llm_gateway.chat(request).await?;
         let content = response
@@ -273,11 +269,7 @@ impl Orchestrator {
             content: observation_prompt,
         });
 
-        let request = ChatRequest {
-            model: self.llm_gateway.get_model_name(),
-            messages,
-            temperature: 0.1,
-        };
+        let request = self.get_chat_request(messages);
 
         let response = self.llm_gateway.chat(request).await?;
         let content = response
@@ -327,11 +319,7 @@ impl Orchestrator {
             content: text.to_string(),
         });
 
-        let request = ChatRequest {
-            model: self.llm_gateway.get_model_name(),
-            messages,
-            temperature: 0.1,
-        };
+        let request = self.get_chat_request(messages);
 
         let response = self.llm_gateway.chat(request).await?;
         let content = response
@@ -385,11 +373,7 @@ impl Orchestrator {
             content: text.to_string(),
         });
 
-        let request = ChatRequest {
-            model: self.llm_gateway.get_model_name(),
-            messages,
-            temperature: 0.1,
-        };
+        let request = self.get_chat_request(messages);
 
         let response = self.llm_gateway.chat(request).await?;
         let content = response
@@ -427,5 +411,13 @@ impl Orchestrator {
             actions: normalized_result.actions,
             tool_calls: normalized_result.tool_calls,
         })
+    }
+
+    fn get_chat_request(&self, messages: Vec<ChatMessage>) -> ChatRequest {
+        return ChatRequest {
+            model: self.llm_gateway.get_model_name(),
+            messages,
+            temperature: self.llm_gateway.get_temperature(),
+        };
     }
 }

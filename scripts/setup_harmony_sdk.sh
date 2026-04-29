@@ -300,10 +300,11 @@ export_sdk_paths() {
   persist_env "HOS_SDK_HOME" "${HWSDK_DIR}"
   persist_env "HARMONY_SDK_HOME" "${HWSDK_DIR}"
   persist_env "OHOS_SDK_NATIVE" "${HWSDK_DIR}/native"
-  persist_env "OHOS_NDK_HOME" "${HWSDK_DIR}/native"
+  persist_env "OHOS_NDK_HOME" "${HWSDK_DIR}"
 
   echo "==> HOS_SDK_HOME=${HWSDK_DIR}"
-  echo "==> OHOS_NDK_HOME=${HWSDK_DIR}/native"
+  echo "==> OHOS_SDK_NATIVE=${HWSDK_DIR}/native"
+  echo "==> OHOS_NDK_HOME=${HWSDK_DIR}"
 }
 
 require_command curl

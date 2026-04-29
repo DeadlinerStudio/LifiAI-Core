@@ -91,6 +91,7 @@ CI 侧当前可配置的 GitHub Actions Variables：
 - 如果 release 里已经有完整 `hwsdk` / `sdk` 镜像，就优先配置 `HARMONY_SDK_FULL_DOWNLOAD_URL` 或 `HARMONY_SDK_FULL_ASSET_PATTERN`
 - 只有没有完整 SDK 镜像时，才退回 `command-line-tools + sdkmgr install`
 - 当前 workflow 默认已提供一个公开完整 SDK 地址：`https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/L2-SDK-MAC-M1-PUBLIC.tar.gz`
+- 当前脚本会导出：`HOS_SDK_HOME=<sdk-root>`、`OHOS_SDK_NATIVE=<sdk-root>/native`、`OHOS_NDK_HOME=<sdk-root>`，以兼容 `ohrs` 的工具链路径推导
 
 原因是后者仍然依赖远端服务在线返回 toolchains 下载地址，在 GitHub Actions 上稳定性较差。
 

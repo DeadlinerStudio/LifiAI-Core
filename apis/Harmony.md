@@ -57,28 +57,24 @@ cd vendor/deadliner_core
 
 ## 3.1 CI 推荐分层
 
-当前仓库已经把鸿蒙 CI 拆成两层：
+当前仓库的 GitHub Actions 现在只保留一条真正的鸿蒙产物线：
 
-- `Harmony Rust Validation`：默认执行。用于校验 `ffi_ohos` 和 OpenHarmony Rust 产物链路是否还可编译。
-- `Harmony HAP Build`：可选执行。只有在仓库配置了真正的 Harmony 宿主工程目录后才会运行，并会走完整的 SDK 安装 + `hvigor assembleHap` 流程。
+- `HarmonyOS Build`：安装 `ohrs`、安装 Harmony SDK、导出 `OHOS_NDK_HOME`，然后执行 [`scripts/build_ohos.sh`](/Users/aritxonly/Codes/Agent/deadliner_core/scripts/build_ohos.sh)
 
-这样做的原因是：
+这条 CI 的原则是：
 
-- 本仓库本身是引擎仓库，不自带 ArkTS 宿主应用
-- 没有 `oh-package.json5` / `hvigor` / `module.json5` 时，CI 不可能真实产出 `.hap`
-- 但我们仍然希望 PR 阶段能持续验证 Rust / NAPI / OHOS 这一层不会回归
+- 只接受真实 `ohrs build`
+- 如果没有 `ohrs`，直接失败
+- 如果没有 Harmony SDK / `OHOS_NDK_HOME`，直接失败
+- 如果缺少 OpenHarmony Rust targets，直接失败
+- 不再回退到 `cargo build` 生成 host validation artifact
 
-如果后面把 Harmony 宿主工程也放进这个仓库，可以直接配置以下 GitHub Actions Variables：
+CI 侧当前可配置的 GitHub Actions Variables：
 
-- `HARMONY_APP_DIR`：Harmony 宿主工程目录，相对仓库根目录
-- `HARMONY_PRODUCT`：可选，默认 `default`
-- `HARMONY_HVIGOR_TASK`：可选，默认 `assembleHap`
 - `HARMONY_SDK_RELEASE_REPO`：可选，默认 `harmonyos-dev/hos-sdk`
 - `HARMONY_SDK_ASSET_PATTERN`：可选，用于匹配 command-line tools 压缩包
 - `HARMONY_SDK_DOWNLOAD_URL`：可选，直接指定 SDK 下载地址
 - `HARMONY_SDK_PACKAGES`：可选，默认 `toolchains:9 OpenHarmony/toolchains:9`
-- `OHOS_HVIGOR_VERSION`：可选，默认 `2.4.2`
-- `OHOS_HVIGOR_OHOS_PLUGIN_VERSION`：可选，默认与 `OHOS_HVIGOR_VERSION` 一致
 
 如果 SDK release 是私有的，还可以额外配置：
 
@@ -87,7 +83,6 @@ cd vendor/deadliner_core
 对应脚本入口：
 
 - [`scripts/setup_harmony_sdk.sh`](/Users/aritxonly/Codes/Agent/deadliner_core/scripts/setup_harmony_sdk.sh)
-- [`scripts/build_harmony_hap.sh`](/Users/aritxonly/Codes/Agent/deadliner_core/scripts/build_harmony_hap.sh)
 
 ## 4. 职责划分
 

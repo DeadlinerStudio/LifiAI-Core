@@ -5,7 +5,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT_DIR}/dist/ohos"
 PACKAGE_NAME="${PACKAGE_NAME:-ffi_ohos}"
-LIB_NAME="${LIB_NAME:-ffi_ohos}"
 PACKAGE_DIR="${ROOT_DIR}/${PACKAGE_NAME}"
 OHOS_TARGETS=(
   "aarch64-unknown-linux-ohos"
@@ -61,8 +60,25 @@ find_ohrs() {
   return 1
 }
 
-has_ohos_sdk() {
-  resolve_ohos_native_home >/dev/null 2>&1
+require_ohrs() {
+  local ohrs_bin
+  ohrs_bin="$(find_ohrs || true)"
+
+  if [[ -z "${ohrs_bin}" ]]; then
+    echo "error: ohrs is required to build Harmony artifacts." >&2
+    echo "hint: install it with 'cargo install ohrs --locked'." >&2
+    exit 1
+  fi
+
+  echo "${ohrs_bin}"
+}
+
+require_ohos_sdk() {
+  if ! resolve_ohos_native_home >/dev/null 2>&1; then
+    echo "error: OpenHarmony SDK environment is missing." >&2
+    echo "hint: set OHOS_NDK_HOME, OHOS_SDK_NATIVE, or HOS_SDK_HOME before building." >&2
+    exit 1
+  fi
 }
 
 check_ohos_targets() {
@@ -76,44 +92,9 @@ check_ohos_targets() {
   done
 
   if (( ${#missing[@]} > 0 )); then
-    echo "warning: missing OpenHarmony Rust targets: ${missing[*]}" >&2
-    echo "hint: run 'rustup target add ${missing[*]}' before building real OpenHarmony artifacts." >&2
-    return 1
-  fi
-
-  return 0
-}
-
-copy_host_validation_artifact() {
-  local target_dir lib_ext built_lib validation_dir
-
-  target_dir="${ROOT_DIR}/target/release"
-  validation_dir="${OUT_DIR}/host-validation"
-  mkdir -p "${validation_dir}"
-
-  case "$(uname -s)" in
-    Darwin)
-      lib_ext="dylib"
-      ;;
-    Linux)
-      lib_ext="so"
-      ;;
-    MINGW*|MSYS*|CYGWIN*)
-      lib_ext="dll"
-      ;;
-    *)
-      echo "warning: unsupported host platform for artifact copy; skipping local library export." >&2
-      return 0
-      ;;
-  esac
-
-  built_lib="${target_dir}/lib${LIB_NAME}.${lib_ext}"
-
-  if [[ -f "${built_lib}" ]]; then
-    cp "${built_lib}" "${validation_dir}/"
-    echo "==> Host validation artifact copied to ${validation_dir}"
-  else
-    echo "warning: expected host validation library not found at ${built_lib}" >&2
+    echo "error: missing OpenHarmony Rust targets: ${missing[*]}" >&2
+    echo "hint: run 'rustup target add ${missing[*]}' before building." >&2
+    exit 1
   fi
 }
 
@@ -125,32 +106,17 @@ if [[ ! -d "${PACKAGE_DIR}" ]]; then
   exit 1
 fi
 
-OHRS_BIN="$(find_ohrs || true)"
 bootstrap_ohos_env
+OHRS_BIN="$(require_ohrs)"
+require_ohos_sdk
+check_ohos_targets
 
-if [[ -n "${OHRS_BIN}" ]] && has_ohos_sdk && check_ohos_targets; then
-  echo "==> Building OpenHarmony package for ${PACKAGE_NAME} with ohrs"
-  echo "==> Using reqwest with rustls TLS to avoid target OpenSSL toolchain requirements"
-  echo "==> Using ohrs binary: ${OHRS_BIN}"
-  echo "==> Using OpenHarmony native SDK: ${OHOS_NDK_HOME}"
+echo "==> Building OpenHarmony package for ${PACKAGE_NAME} with ohrs"
+echo "==> Using reqwest with rustls TLS to avoid target OpenSSL toolchain requirements"
+echo "==> Using ohrs binary: ${OHRS_BIN}"
+echo "==> Using OpenHarmony native SDK: ${OHOS_NDK_HOME}"
 
-  cd "${PACKAGE_DIR}"
-  "${OHRS_BIN}" build --release --dist "${OUT_DIR}"
-  echo "==> ohrs build finished. Check the generated dist output from ohrs."
-else
-  if [[ -z "${OHRS_BIN}" ]]; then
-    echo "warning: ohrs is not installed; falling back to cargo build for shape validation only." >&2
-    echo "hint: install it with 'cargo install ohrs' to produce real OpenHarmony artifacts." >&2
-  elif ! has_ohos_sdk; then
-    echo "warning: OpenHarmony SDK environment is missing; falling back to cargo build validation." >&2
-    echo "hint: export OHOS_NDK_HOME or OHOS_SDK_NATIVE and rerun this script for a real OpenHarmony artifact build." >&2
-  else
-    echo "warning: OpenHarmony Rust targets are incomplete; falling back to cargo build validation." >&2
-  fi
+cd "${PACKAGE_DIR}"
+"${OHRS_BIN}" build --release --dist "${OUT_DIR}"
 
-  cargo build --release -p "${PACKAGE_NAME}"
-  copy_host_validation_artifact
-  echo "==> Cargo fallback completed. Install ohrs to produce real Harmony artifacts."
-fi
-
-echo "==> Suggested next step: add OHOS-specific napi/ohrs exports inside ffi_ohos only."
+echo "==> ohrs build finished. Check the generated dist output from ohrs."

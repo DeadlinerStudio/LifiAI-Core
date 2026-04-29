@@ -181,6 +181,7 @@ jobs:
           HARMONY_SDK_DOWNLOAD_URL: ${{ vars.HARMONY_SDK_DOWNLOAD_URL }}
           HARMONY_SDK_PACKAGES: ${{ vars.HARMONY_SDK_PACKAGES }}
           HARMONY_SDK_GITHUB_TOKEN: ${{ secrets.HARMONY_SDK_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/setup_harmony_sdk.sh
 
       - name: Build Harmony artifacts

@@ -59,8 +59,10 @@ resolve_sdkmgr_bin() {
 }
 
 github_auth_header() {
-  if [[ -n "${HARMONY_SDK_GITHUB_TOKEN:-}" ]]; then
-    printf 'Authorization: Bearer %s' "${HARMONY_SDK_GITHUB_TOKEN}"
+  local token="${HARMONY_SDK_GITHUB_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
+
+  if [[ -n "${token}" ]]; then
+    printf 'Authorization: Bearer %s' "${token}"
   fi
 }
 

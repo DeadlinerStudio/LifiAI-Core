@@ -72,8 +72,10 @@ cd vendor/deadliner_core
 CI 侧当前可配置的 GitHub Actions Variables：
 
 - `HARMONY_SDK_RELEASE_REPO`：可选，默认 `harmonyos-dev/hos-sdk`
+- `HARMONY_SDK_FULL_DOWNLOAD_URL`：可选，优先使用的完整 Harmony SDK 镜像下载地址
+- `HARMONY_SDK_FULL_ASSET_PATTERN`：可选，用于从 release 中匹配完整 SDK 镜像
 - `HARMONY_SDK_ASSET_PATTERN`：可选，用于匹配 command-line tools 压缩包
-- `HARMONY_SDK_DOWNLOAD_URL`：可选，直接指定 SDK 下载地址
+- `HARMONY_SDK_DOWNLOAD_URL`：可选，直接指定 command-line tools 下载地址
 - `HARMONY_SDK_PACKAGES`：可选，默认 `toolchains:9 OpenHarmony/toolchains:9`
 
 如果 SDK release 是私有的，还可以额外配置：
@@ -83,6 +85,13 @@ CI 侧当前可配置的 GitHub Actions Variables：
 对应脚本入口：
 
 - [`scripts/setup_harmony_sdk.sh`](/Users/aritxonly/Codes/Agent/deadliner_core/scripts/setup_harmony_sdk.sh)
+
+推荐优先策略：
+
+- 如果 release 里已经有完整 `hwsdk` / `sdk` 镜像，就优先配置 `HARMONY_SDK_FULL_DOWNLOAD_URL` 或 `HARMONY_SDK_FULL_ASSET_PATTERN`
+- 只有没有完整 SDK 镜像时，才退回 `command-line-tools + sdkmgr install`
+
+原因是后者仍然依赖远端服务在线返回 toolchains 下载地址，在 GitHub Actions 上稳定性较差。
 
 ## 4. 职责划分
 

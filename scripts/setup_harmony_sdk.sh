@@ -48,6 +48,10 @@ persist_env() {
 
 resolve_sdkmgr_bin() {
   local sdkmgr_path
+  if [[ ! -d "${COMMANDLINE_DIR}" ]]; then
+    return 1
+  fi
+
   sdkmgr_path="$(find "${COMMANDLINE_DIR}" -type f -path '*/sdkmanager/bin/sdkmgr' | head -n 1)"
 
   if [[ -z "${sdkmgr_path}" ]]; then
@@ -138,7 +142,8 @@ install_commandline_tools() {
   rm -rf "${COMMANDLINE_DIR}"
   mkdir -p "${COMMANDLINE_DIR}"
   unzip -q "${COMMANDLINE_ZIP}" -d "${COMMANDLINE_DIR}"
-  chmod +x "$(resolve_sdkmgr_bin)"
+  sdkmgr_bin="$(resolve_sdkmgr_bin)"
+  chmod +x "${sdkmgr_bin}"
 }
 
 install_sdk_packages() {

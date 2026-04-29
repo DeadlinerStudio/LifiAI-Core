@@ -143,7 +143,7 @@ jobs:
           retention-days: 30
 
   harmony-build:
-    name: Harmony Build
+    name: Harmony Rust Validation
     runs-on: ubuntu-latest
     needs: rust-check
 
@@ -172,6 +172,77 @@ jobs:
         with:
           name: deadliner-harmony-artifacts
           path: dist/ohos
+          if-no-files-found: warn
+          retention-days: 30
+
+  harmony-hap-build:
+    name: Harmony HAP Build
+    runs-on: macos-14
+    needs: rust-check
+    if: vars.HARMONY_APP_DIR != ''
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-ohos,armv7-unknown-linux-ohos,x86_64-unknown-linux-ohos
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache Harmony SDK
+        uses: actions/cache@v4
+        with:
+          path: .cache/harmony-sdk
+          key: ${{ runner.os }}-harmony-sdk-${{ vars.HARMONY_SDK_RELEASE_REPO || 'harmonyos-dev/hos-sdk' }}-${{ vars.HARMONY_SDK_ASSET_PATTERN || 'auto' }}-${{ vars.HARMONY_SDK_PACKAGES || 'toolchains:9 OpenHarmony/toolchains:9' }}
+
+      - name: Install ohrs
+        run: cargo install ohrs --locked
+
+      - name: Setup Harmony SDK
+        env:
+          HARMONY_SDK_RELEASE_REPO: ${{ vars.HARMONY_SDK_RELEASE_REPO }}
+          HARMONY_SDK_ASSET_PATTERN: ${{ vars.HARMONY_SDK_ASSET_PATTERN }}
+          HARMONY_SDK_DOWNLOAD_URL: ${{ vars.HARMONY_SDK_DOWNLOAD_URL }}
+          HARMONY_SDK_PACKAGES: ${{ vars.HARMONY_SDK_PACKAGES }}
+          HARMONY_SDK_GITHUB_TOKEN: ${{ secrets.HARMONY_SDK_GITHUB_TOKEN }}
+        run: ./scripts/setup_harmony_sdk.sh
+
+      - name: Build OpenHarmony Rust artifacts
+        env:
+          PACKAGE_NAME: ffi_ohos
+          LIB_NAME: ffi_ohos
+        run: ./scripts/build_ohos.sh
+
+      - name: Build Harmony HAP
+        env:
+          HARMONY_APP_DIR: ${{ vars.HARMONY_APP_DIR }}
+          HARMONY_PRODUCT: ${{ vars.HARMONY_PRODUCT }}
+          HARMONY_HVIGOR_TASK: ${{ vars.HARMONY_HVIGOR_TASK }}
+          OHOS_HVIGOR_VERSION: ${{ vars.OHOS_HVIGOR_VERSION }}
+          OHOS_HVIGOR_OHOS_PLUGIN_VERSION: ${{ vars.OHOS_HVIGOR_OHOS_PLUGIN_VERSION }}
+        run: ./scripts/build_harmony_hap.sh
+
+      - name: Upload Harmony HAP artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deadliner-harmony-hap
+          path: dist/harmony-hap
           if-no-files-found: warn
           retention-days: 30
 

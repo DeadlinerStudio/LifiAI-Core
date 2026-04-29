@@ -13,6 +13,35 @@ OHOS_TARGETS=(
   "x86_64-unknown-linux-ohos"
 )
 
+resolve_ohos_native_home() {
+  local candidate
+  local candidates=(
+    "${OHOS_NDK_HOME:-}"
+    "${OHOS_SDK_NATIVE:-}"
+    "${HOS_SDK_HOME:-}/native"
+    "${HARMONY_SDK_HOME:-}/native"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -n "${candidate}" && -d "${candidate}" ]]; then
+      echo "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+bootstrap_ohos_env() {
+  local native_home
+  native_home="$(resolve_ohos_native_home || true)"
+
+  if [[ -n "${native_home}" ]]; then
+    export OHOS_NDK_HOME="${OHOS_NDK_HOME:-${native_home}}"
+    export OHOS_SDK_NATIVE="${OHOS_SDK_NATIVE:-${native_home}}"
+  fi
+}
+
 find_ohrs() {
   if command -v ohrs >/dev/null 2>&1; then
     command -v ohrs
@@ -33,7 +62,7 @@ find_ohrs() {
 }
 
 has_ohos_sdk() {
-  [[ -n "${OHOS_NDK_HOME:-}" || -n "${OHOS_SDK_NATIVE:-}" ]]
+  resolve_ohos_native_home >/dev/null 2>&1
 }
 
 check_ohos_targets() {
@@ -97,11 +126,13 @@ if [[ ! -d "${PACKAGE_DIR}" ]]; then
 fi
 
 OHRS_BIN="$(find_ohrs || true)"
+bootstrap_ohos_env
 
 if [[ -n "${OHRS_BIN}" ]] && has_ohos_sdk && check_ohos_targets; then
   echo "==> Building OpenHarmony package for ${PACKAGE_NAME} with ohrs"
   echo "==> Using reqwest with rustls TLS to avoid target OpenSSL toolchain requirements"
   echo "==> Using ohrs binary: ${OHRS_BIN}"
+  echo "==> Using OpenHarmony native SDK: ${OHOS_NDK_HOME}"
 
   cd "${PACKAGE_DIR}"
   "${OHRS_BIN}" build --release --dist "${OUT_DIR}"

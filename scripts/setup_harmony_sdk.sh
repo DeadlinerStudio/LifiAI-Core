@@ -231,6 +231,33 @@ find_hwsdk_root() {
   dirname "${native_dir}"
 }
 
+extract_nested_sdk_archives() {
+  local search_root="$1"
+  local extracted_any=0
+  local archive_path
+
+  mkdir -p "${HWSDK_DIR}"
+
+  while IFS= read -r -d '' archive_path; do
+    extracted_any=1
+    echo "==> Extracting nested SDK archive: $(basename "${archive_path}")"
+    unzip -q "${archive_path}" -d "${HWSDK_DIR}"
+  done < <(
+    find "${search_root}" -type f \( \
+      -iname 'native-*.zip' -o \
+      -iname 'toolchains-*.zip' -o \
+      -iname 'openharmony-native-*.zip' -o \
+      -iname 'openharmony-toolchains-*.zip' \
+    \) -print0
+  )
+
+  if [[ "${extracted_any}" -eq 1 ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
 install_full_sdk_if_available() {
   local full_sdk_url full_sdk_root full_sdk_archive
   full_sdk_url="$(resolve_full_sdk_url || true)"
@@ -246,13 +273,20 @@ install_full_sdk_if_available() {
 
   full_sdk_root="$(find_hwsdk_root "${FULL_SDK_EXTRACT_DIR}" || true)"
   if [[ -z "${full_sdk_root}" ]]; then
+    extract_nested_sdk_archives "${FULL_SDK_EXTRACT_DIR}" || true
+    full_sdk_root="$(find_hwsdk_root "${HWSDK_DIR}" || true)"
+  fi
+
+  if [[ -z "${full_sdk_root}" ]]; then
     echo "warning: mirrored Harmony SDK archive did not contain a detectable native SDK; falling back to sdkmgr." >&2
     return 1
   fi
 
-  rm -rf "${HWSDK_DIR}"
-  mkdir -p "$(dirname "${HWSDK_DIR}")"
-  cp -R "${full_sdk_root}" "${HWSDK_DIR}"
+  if [[ "${full_sdk_root}" != "${HWSDK_DIR}" ]]; then
+    rm -rf "${HWSDK_DIR}"
+    mkdir -p "$(dirname "${HWSDK_DIR}")"
+    cp -R "${full_sdk_root}" "${HWSDK_DIR}"
+  fi
   echo "==> Using mirrored Harmony SDK from release asset"
   return 0
 }

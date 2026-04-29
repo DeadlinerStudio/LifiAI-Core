@@ -177,7 +177,7 @@ jobs:
       - name: Setup Harmony SDK
         env:
           HARMONY_SDK_RELEASE_REPO: ${{ vars.HARMONY_SDK_RELEASE_REPO }}
-          HARMONY_SDK_FULL_DOWNLOAD_URL: ${{ vars.HARMONY_SDK_FULL_DOWNLOAD_URL || 'https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/ohos-sdk-mac-public.tar.gz' }}
+          HARMONY_SDK_FULL_DOWNLOAD_URL: ${{ vars.HARMONY_SDK_FULL_DOWNLOAD_URL || 'https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/L2-SDK-MAC-M1-PUBLIC.tar.gz' }}
           HARMONY_SDK_FULL_ASSET_PATTERN: ${{ vars.HARMONY_SDK_FULL_ASSET_PATTERN }}
           HARMONY_SDK_ASSET_PATTERN: ${{ vars.HARMONY_SDK_ASSET_PATTERN }}
           HARMONY_SDK_DOWNLOAD_URL: ${{ vars.HARMONY_SDK_DOWNLOAD_URL }}

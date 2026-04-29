@@ -70,27 +70,31 @@ resolve_asset_url() {
     return 0
   fi
 
-  local auth_header release_json asset_pattern header_args=()
+  local auth_header release_json asset_pattern
   asset_pattern="${HARMONY_SDK_ASSET_PATTERN:-$(detect_asset_pattern)}"
   auth_header="$(github_auth_header || true)"
 
   if [[ -n "${auth_header}" ]]; then
-    header_args=(-H "${auth_header}")
+    release_json="$(
+      curl -fsSL \
+        -H "Accept: application/vnd.github+json" \
+        -H "${auth_header}" \
+        "https://api.github.com/repos/${RELEASE_REPO}/releases/latest"
+    )"
+  else
+    release_json="$(
+      curl -fsSL \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/${RELEASE_REPO}/releases/latest"
+    )"
   fi
-
-  release_json="$(
-    curl -fsSL \
-      -H "Accept: application/vnd.github+json" \
-      "${header_args[@]}" \
-      "https://api.github.com/repos/${RELEASE_REPO}/releases/latest"
-  )"
 
   echo "${release_json}" | jq -r --arg pattern "${asset_pattern}" \
     '.assets[] | select(.name | test($pattern)) | .browser_download_url' | head -n 1
 }
 
 download_commandline_tools() {
-  local asset_url auth_header header_args=()
+  local asset_url auth_header
   asset_url="$(resolve_asset_url)"
 
   if [[ -z "${asset_url}" || "${asset_url}" == "null" ]]; then
@@ -100,18 +104,21 @@ download_commandline_tools() {
   fi
 
   auth_header="$(github_auth_header || true)"
-  if [[ -n "${auth_header}" ]]; then
-    header_args=(-H "${auth_header}")
-  fi
 
   mkdir -p "${DOWNLOAD_ROOT}"
 
   if [[ ! -f "${COMMANDLINE_ZIP}" ]]; then
     echo "==> Downloading Harmony command-line tools"
-    curl -fL \
-      "${header_args[@]}" \
-      -o "${COMMANDLINE_ZIP}" \
-      "${asset_url}"
+    if [[ -n "${auth_header}" ]]; then
+      curl -fL \
+        -H "${auth_header}" \
+        -o "${COMMANDLINE_ZIP}" \
+        "${asset_url}"
+    else
+      curl -fL \
+        -o "${COMMANDLINE_ZIP}" \
+        "${asset_url}"
+    fi
   else
     echo "==> Reusing cached Harmony command-line tools archive"
   fi

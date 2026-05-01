@@ -3,7 +3,7 @@ use std::ffi::CString;
 #[cfg(target_env = "ohos")]
 use std::ffi::CString;
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_env = "ohos"))]
 const LOG_TAG: &str = "DeadlinerCore";
 
 pub fn debug(message: &str) {

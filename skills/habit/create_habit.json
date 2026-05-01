@@ -1,6 +1,6 @@
 {
   "name": "create_habit",
-  "description": "创建周期性习惯。仅当用户明确表达新增/创建习惯时使用，不用于查询。",
+  "description": "创建周期性习惯，支持一次创建单条或多条习惯。仅当用户明确表达新增/创建习惯时使用，不用于查询。",
   "domain": "HabitAgent",
   "capabilities": ["CREATE_HABIT"],
   "supportedPlatforms": ["ios", "android", "harmony"],
@@ -8,6 +8,50 @@
   "parameters": {
     "type": "object",
     "properties": {
+      "habits": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "period": {
+              "type": "string",
+              "enum": ["DAILY", "WEEKLY", "MONTHLY", "ONCE", "EBBINGHAUS"]
+            },
+            "timesPerPeriod": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "goalType": {
+              "type": "string",
+              "enum": ["PER_PERIOD", "TOTAL"]
+            },
+            "totalTarget": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": ["name", "period", "timesPerPeriod", "goalType"],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "goalType": { "const": "TOTAL" }
+                },
+                "required": ["goalType"]
+              },
+              "then": {
+                "required": ["totalTarget"]
+              }
+            }
+          ],
+          "additionalProperties": false
+        },
+        "description": "批量创建习惯；传入后将忽略顶层单条字段"
+      },
       "name": {
         "type": "string"
       },
@@ -28,7 +72,10 @@
         "minimum": 1
       }
     },
-    "required": ["name", "period", "timesPerPeriod", "goalType"],
+    "anyOf": [
+      { "required": ["habits"] },
+      { "required": ["name", "period", "timesPerPeriod", "goalType"] }
+    ],
     "allOf": [
       {
         "if": {

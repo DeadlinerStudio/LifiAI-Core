@@ -1,6 +1,6 @@
 {
   "name": "create_task",
-  "description": "创建单次任务。仅当用户明确表达新增/添加任务时使用，不用于查询。",
+  "description": "创建单次任务，支持一次创建单条或多条任务。仅当用户明确表达新增/添加任务时使用，不用于查询。",
   "domain": "TaskAgent",
   "capabilities": ["CREATE_TASK"],
   "supportedPlatforms": ["ios", "android", "harmony"],
@@ -8,6 +8,31 @@
   "parameters": {
     "type": "object",
     "properties": {
+      "tasks": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "dueTime": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$",
+              "description": "截止时间，格式必须为 YYYY-MM-DD HH:MM"
+            },
+            "note": {
+              "type": "string",
+              "description": "任务备注"
+            }
+          },
+          "required": ["name", "dueTime"],
+          "additionalProperties": false
+        },
+        "description": "批量创建任务；传入后将忽略顶层 name/dueTime/note"
+      },
       "name": {
         "type": "string",
         "minLength": 1
@@ -22,7 +47,10 @@
         "description": "任务备注"
       }
     },
-    "required": ["name", "dueTime"],
+    "anyOf": [
+      { "required": ["tasks"] },
+      { "required": ["name", "dueTime"] }
+    ],
     "additionalProperties": false
   }
 }
